@@ -18,6 +18,7 @@ import argparse
 import contextlib
 import json
 import logging
+import re
 import threading
 import time
 from collections import deque
@@ -97,6 +98,97 @@ def _get_default_output_device() -> int | None:
         return int(info["index"]) if "index" in info else sd.default.device[1]
     except Exception:
         return None
+
+
+# Patterns that indicate virtual/monitor/loopback devices — not real hardware
+_VIRTUAL_DEVICE_PATTERNS = re.compile(
+    r"monitor|loopback|virtual|virt[\s_-]|null|dummy|soundflower|blackhole|jack\b",
+    re.IGNORECASE,
+)
+
+
+def _score_input_device(dev: dict, idx: int) -> float:
+    """Score an input device for mic use. Higher is better.
+
+    Prefers: real hardware, sample rate close to 16kHz, fewer channels (dedicated mic).
+    """
+    sr = int(dev["default_samplerate"])
+    name = dev["name"]
+    score = 0.0
+
+    # Penalise virtual/monitor devices heavily
+    if _VIRTUAL_DEVICE_PATTERNS.search(name):
+        score -= 100
+
+    # Sample rate distance from 16kHz — zero is perfect, each kHz off costs 1 point
+    score -= abs(sr - 16_000) / 1000
+
+    # Prefer mono/stereo (dedicated mics) over many-channel interfaces
+    ch = dev["max_input_channels"]
+    if ch <= 2:
+        score += 5
+
+    # Small bonus for being the system default input device
+    try:
+        default_idx = sd.default.device[0]
+        if idx == default_idx:
+            score += 3
+    except Exception:
+        pass
+
+    return score
+
+
+def _score_output_device(dev: dict, idx: int) -> float:
+    """Score an output device for speaker use. Higher is better.
+
+    Prefers: real hardware, stereo, system default, sample rates friendly to 24kHz TTS.
+    """
+    sr = int(dev["default_samplerate"])
+    name = dev["name"]
+    score = 0.0
+
+    # Penalise virtual/monitor devices heavily
+    if _VIRTUAL_DEVICE_PATTERNS.search(name):
+        score -= 100
+
+    # Prefer stereo (2 channels) — typical speakers/headphones
+    ch = dev["max_output_channels"]
+    if ch >= 2:
+        score += 5
+
+    # Prefer sample rates that evenly divide by 24kHz (common TTS rate)
+    # e.g. 48kHz is a clean 2x multiple, 44.1kHz is not
+    if sr > 0 and sr % 24_000 == 0:
+        score += 3
+
+    # Bonus for system default
+    try:
+        default_idx = sd.default.device[1]
+        if idx == default_idx:
+            score += 10
+    except Exception:
+        pass
+
+    return score
+
+
+def _pick_best_input_device(devices: list[tuple[str, int]]) -> int | None:
+    """Pick the best mic device from the available list using scoring heuristics."""
+    if not devices:
+        return None
+    all_devs = sd.query_devices()
+    best_idx = max(devices, key=lambda d: _score_input_device(all_devs[d[1]], d[1]))[1]
+    return best_idx
+
+
+def _pick_best_output_device(devices: list[tuple[str, int]]) -> int | None:
+    """Pick the best speaker device from the available list using scoring heuristics."""
+    if not devices:
+        return None
+    all_devs = sd.query_devices()
+    best_idx = max(devices, key=lambda d: _score_output_device(all_devs[d[1]], d[1]))[1]
+    return best_idx
 
 
 _DEVICES_CFG = Path.home() / ".config" / "edgevox" / "devices.json"
@@ -784,18 +876,11 @@ class EdgeVoxApp(App):
     def compose(self) -> ComposeResult:
         mic_devices = list_input_devices()
         mic_options = [(name, idx) for name, idx in mic_devices]
-        default_mic = self._mic_device if self._mic_device is not None else (mic_devices[0][1] if mic_devices else 0)
+        default_mic = self._mic_device if self._mic_device is not None else (_pick_best_input_device(mic_devices) or 0)
 
         spk_devices = list_output_devices()
         spk_options = [(name, idx) for name, idx in spk_devices]
-        if self._spk_device is not None:
-            default_spk = self._spk_device
-        else:
-            sys_default = _get_default_output_device()
-            if sys_default is not None and any(idx == sys_default for _, idx in spk_devices):
-                default_spk = sys_default
-            else:
-                default_spk = spk_devices[0][1] if spk_devices else 0
+        default_spk = self._spk_device if self._spk_device is not None else (_pick_best_output_device(spk_devices) or 0)
 
         lang_options = get_lang_options()
         voice_opts = voice_options(self._language)
