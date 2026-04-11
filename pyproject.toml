@@ -47,7 +47,7 @@ dependencies = [
 gpu = [
     "onnxruntime-gpu>=1.21",
 ]
-ros2 = ["rclpy"]
+# ros2: rclpy is a system package provided by the ROS2 workspace, not installable from PyPI
 dev = [
     "pytest>=7.0",
     "pytest-asyncio",

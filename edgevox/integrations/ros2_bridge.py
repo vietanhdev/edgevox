@@ -1,7 +1,6 @@
 """ROS2 bridge for EdgeVox — publishes voice pipeline events to ROS2 topics.
 
-Optional: requires 'rclpy' and a ROS2 environment. Install with:
-    pip install edgevox[ros2]
+Optional: requires 'rclpy' from a sourced ROS2 workspace (not available on PyPI).
 """
 
 from __future__ import annotations
