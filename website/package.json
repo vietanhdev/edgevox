@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "sync-docs": "rsync -av --delete --exclude '.vitepress' ../docs/ docs/",
+    "sync-docs": "node -e \"const fs=require('fs'),p=require('path');fs.readdirSync('docs').filter(f=>f!=='.vitepress').forEach(f=>{const fp=p.join('docs',f);fs.rmSync(fp,{recursive:true,force:true})});\" && cp -r ../docs/* docs/",
     "dev": "npm run sync-docs && vitepress dev docs",
     "build": "npm run sync-docs && vitepress build docs",
     "preview": "vitepress preview docs"
