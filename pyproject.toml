@@ -106,3 +106,6 @@ line-ending = "lf"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "integration: tests that download real models and run inference (deselect with '-m \"not integration\"')",
+]

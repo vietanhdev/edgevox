@@ -1,0 +1,46 @@
+name: Integration Tests
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+  schedule:
+    - cron: "0 6 * * 1"  # Weekly on Monday 6AM UTC
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y libsndfile1 portaudio19-dev
+
+      - name: Install package with dev extras
+        run: pip install -e ".[dev]"
+
+      - name: Cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-models-${{ runner.os }}-${{ matrix.python-version }}-v1
+          restore-keys: |
+            hf-models-${{ runner.os }}-${{ matrix.python-version }}-
+            hf-models-${{ runner.os }}-
+
+      - name: Cache edgevox models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/edgevox
+          key: edgevox-models-${{ runner.os }}-v1
+
+      - name: Run integration tests
+        run: pytest -m integration -v --tb=short
+        timeout-minutes: 30
