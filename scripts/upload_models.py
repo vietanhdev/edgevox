@@ -255,7 +255,7 @@ def generate_voice_readme(
     status = "Freely redistributable" if safe else "See license note below"
     return f"""# {voice_id}
 
-Piper ONNX TTS voice model, redistributed as part of [EdgeVox](https://github.com/edgevox-ai/edgevox).
+Piper ONNX TTS voice model, redistributed as part of [EdgeVox](https://github.com/vietanhdev/edgevox).
 
 | Field | Value |
 |-------|-------|
@@ -319,7 +319,7 @@ tags:
 
 # EdgeVox Models
 
-Consolidated STT and TTS models for [EdgeVox](https://github.com/edgevox-ai/edgevox) — sub-second local voice AI for robots and edge devices.
+Consolidated STT and TTS models for [EdgeVox](https://github.com/vietanhdev/edgevox) — sub-second local voice AI for robots and edge devices.
 
 ## STT Models
 
