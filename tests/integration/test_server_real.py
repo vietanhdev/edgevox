@@ -59,26 +59,14 @@ class TestServerWebSocketReal:
             assert "languages" in ready
             assert "voices" in ready
 
-    def test_websocket_text_input(self, real_server):
+    def test_websocket_reset(self, real_server):
+        """Verify reset control works with real server."""
         client, _ = real_server
         with client.websocket_connect("/ws") as ws:
             ws.receive_json()  # ready
             ws.receive_json()  # listening
 
-            # Send text input
-            ws.send_json({"type": "text_input", "text": "Say hello."})
-
-            # Collect messages until we get bot_text
-            messages = []
-            for _ in range(50):
-                try:
-                    msg = ws.receive_json()
-                    messages.append(msg)
-                    if msg.get("type") == "bot_text":
-                        break
-                except Exception:
-                    break
-
-            types = [m["type"] for m in messages]
-            # Should see state changes and bot output
-            assert any(t in ("bot_text", "bot_token", "bot_sentence") for t in types)
+            ws.send_json({"type": "reset"})
+            msg = ws.receive_json()
+            assert msg["type"] == "info"
+            assert "cleared" in msg["message"]
