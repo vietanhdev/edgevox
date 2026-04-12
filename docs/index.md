@@ -13,6 +13,10 @@ hero:
       text: View on GitHub
       link: https://github.com/vietanhdev/edgevox
 
+  image:
+    src: /screenshot.png
+    alt: EdgeVox TUI Screenshot
+
 features:
   - title: Sub-second Latency
     icon: ⚡

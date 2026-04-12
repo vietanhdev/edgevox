@@ -2,6 +2,8 @@
 
 EdgeVox is a **sub-second local voice AI** designed for robots, edge devices, and anyone who wants private voice interaction without cloud dependencies.
 
+![EdgeVox TUI Screenshot](/screenshot.png)
+
 ## What is EdgeVox?
 
 EdgeVox is a streaming voice pipeline that chains together:

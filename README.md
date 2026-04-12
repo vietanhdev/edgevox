@@ -4,30 +4,38 @@
 
 No cloud APIs. No internet after setup. Fully private. Powered by Gemma 4.
 
-```
-    ______    __         _    __
-   / ____/___/ /___ ____| |  / /___  _  __
-  / __/ / __  / __ `/ _ \ | / / __ \| |/_/
- / /___/ /_/ / /_/ /  __/ |/ / /_/ />  <
-/_____/\__,_/\__, /\___/|___/\____/_/|_|
-            /____/
-```
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-**Stack:** Silero VAD -> faster-whisper (STT) -> Gemma 4 E2B IT via llama.cpp (LLM) -> Kokoro 82M (TTS)
+![EdgeVox TUI Screenshot](docs/public/screenshot.png)
 
-**Tested latency:** **0.80s** end-to-end on RTX 3080 (STT 0.40s + LLM 0.33s + TTS 0.08s)
+---
+
+**0.8s** end-to-end latency &nbsp;|&nbsp; **15** languages &nbsp;|&nbsp; **56** voices &nbsp;|&nbsp; **4** wake words &nbsp;|&nbsp; **4** interfaces (TUI, Web, CLI, Text)
+
+---
+
+## Why EdgeVox?
+
+Most voice assistants send your audio to the cloud. EdgeVox runs **everything locally** — VAD, STT, LLM, and TTS — on hardware as small as a Jetson Orin Nano. The streaming pipeline starts speaking the first sentence while the LLM is still generating the rest, keeping latency under one second on a GPU.
+
+```
+Microphone → Silero VAD → faster-whisper (STT) → Gemma 4 via llama.cpp → Kokoro 82M (TTS) → Speaker
+```
 
 ## Features
 
-- **Streaming pipeline** — speaks first sentence while LLM generates the rest
-- **Interrupt support** — speak while bot is talking to cut it off
-- **Wake word detection** — "Hey Jarvis" / "Lily" (optional, via OpenWakeWord)
-- **Beautiful TUI** — ASCII logo, sparkline waveform, latency history, GPU/RAM monitor, model info panel
-- **ROS2 bridge** — full robotics integration: streaming tokens, text input, interrupt, language/voice switching, wake word events, query APIs
-- **Slash commands** — `/reset`, `/lang`, `/voice`, `/say`, `/mictest`, `/model` in the TUI
-- **Chat export** — Ctrl+S to save conversation as markdown
+- **Sub-second streaming** — speaks the first sentence while the LLM generates the rest (0.8s on RTX 3080)
 - **15 languages** — English, Vietnamese, French, Spanish, Hindi, Italian, Portuguese, Japanese, Chinese, Korean, German, Thai, Russian, Arabic, Indonesian
-- **Auto-detects hardware** — GPU layers, model size, STT model
+- **56 voices** across 4 TTS backends — Kokoro (25), Piper (20), Supertonic (10), PyThaiTTS (1)
+- **Voice interrupt** — speak while the bot is talking to cut it off naturally
+- **4 wake words** — "Hey Jarvis", "Alexa", "Hey Mycroft", "Okay Nabu" via pymicro-wakeword
+- **15 slash commands** — `/lang`, `/voice`, `/say`, `/mictest`, `/model`, `/devices`, and more
+- **Web UI** — FastAPI + WebSocket server with a Vue.js frontend
+- **Beautiful TUI** — ASCII logo, sparkline waveform, latency history, GPU/RAM monitor
+- **ROS2 bridge** — full robotics integration with streaming tokens, text input, interrupt, language/voice switching, and query APIs
+- **Chat export** — save conversations as markdown
+- **Auto-detects hardware** — GPU layers, model size, and STT model selection
 
 ## Hardware Requirements
 
@@ -74,6 +82,9 @@ edgevox
 # TUI mode (default, recommended)
 edgevox
 
+# Web UI mode
+edgevox --web-ui
+
 # With wake word
 edgevox --wakeword "hey jarvis"
 
@@ -95,6 +106,18 @@ edgevox \
     --voice am_adam \
     --language en
 ```
+
+## Languages & Backends
+
+| Language | STT Backend | TTS Backend | Voices |
+|----------|-------------|-------------|--------|
+| English, French, Spanish, Hindi, Italian, Portuguese, Japanese, Chinese | faster-whisper | Kokoro | 25 |
+| Vietnamese | sherpa-onnx (Zipformer) | Piper | 20 |
+| German, Russian, Arabic, Indonesian | faster-whisper | Piper | varies |
+| Korean | faster-whisper | Supertonic | 10 |
+| Thai | faster-whisper | PyThaiTTS | 1 |
+
+Models are hosted on [`nrl-ai/edgevox-models`](https://huggingface.co/nrl-ai/edgevox-models) (HuggingFace) with fallback to upstream repos.
 
 ## TUI Controls
 
@@ -118,6 +141,9 @@ edgevox \
 | `/model SIZE` | Switch Whisper model (small/medium/large-v3-turbo) |
 | `/voice XX` | Switch TTS voice |
 | `/voices` | List available voices |
+| `/mic` | Switch microphone device |
+| `/spk` | Switch speaker device |
+| `/devices` | List audio devices |
 | `/export` | Export chat to markdown |
 | `/mute` | Mute microphone |
 | `/unmute` | Unmute microphone |
@@ -241,7 +267,7 @@ node.create_subscription(String, '/edgevox/bot_token', on_token, sensor_qos)
 | STT | whisper-large-v3-turbo | 1.5GB | ~2GB |
 | LLM | Gemma 4 E2B IT Q4_K_M | 1.8GB | ~2.5GB |
 | TTS | Kokoro 82M | 200MB | ~300MB |
-| Wake | OpenWakeWord | ~2MB | ~10MB |
+| Wake | pymicro-wakeword | ~5MB | ~10MB |
 
 **M1 Air (8GB):** whisper-small + Q4_K_M = **3.4GB**
 **PC with GPU:** whisper-large-v3-turbo + Q4_K_M = **5.8GB**
@@ -251,7 +277,7 @@ node.create_subscription(String, '/edgevox/bot_token', on_token, sensor_qos)
 Full docs: [EdgeVox Docs](https://edgevox-ai.github.io/edgevox/) (built with VitePress)
 
 ```bash
-cd website && npm run dev
+cd docs && npm run dev
 ```
 
 ## License
