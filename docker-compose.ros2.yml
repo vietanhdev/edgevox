@@ -1,0 +1,38 @@
+services:
+  edgevox-ros2:
+    build:
+      context: .
+      dockerfile: Dockerfile.ros2
+    container_name: edgevox-ros2
+    network_mode: host
+    privileged: false
+    stdin_open: true
+    tty: true
+
+    # Audio: PulseAudio passthrough
+    environment:
+      - PULSE_SERVER=unix:${XDG_RUNTIME_DIR}/pulse/native
+      - DISPLAY=${DISPLAY}
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
+    volumes:
+      # PulseAudio socket
+      - ${XDG_RUNTIME_DIR}/pulse:${XDG_RUNTIME_DIR}/pulse:ro
+      # X11 for GUI tools (rviz2, rqt)
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+      # Mount models from host so they persist across rebuilds
+      - ./models:/workspace/models
+      # Mount voices config
+      - ./voices:/workspace/voices:ro
+      # Share source for live editing (optional — remove for production)
+      - ./edgevox:/workspace/edgevox
+
+    devices:
+      - /dev/snd:/dev/snd  # ALSA audio devices
+
+    # Namespace for running multiple instances (e.g. /robot1/edgevox)
+    # environment (append):
+    #   - EDGEVOX_ROS2_NAMESPACE=/edgevox
+
+    # Run EdgeVox CLI by default; override with: docker compose run edgevox-ros2 bash
+    command: >
+      bash -c "source /opt/ros/jazzy/setup.bash && edgevox --simple-ui --ros2"

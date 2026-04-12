@@ -1,0 +1,77 @@
+FROM ros:jazzy-ros-base AS build
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV ROS_DISTRO=jazzy
+
+# System dependencies for audio and EdgeVox
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-pip \
+    python3-venv \
+    portaudio19-dev \
+    libsndfile1 \
+    alsa-utils \
+    pulseaudio-utils \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install ROS 2 packages used by the bridge
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-${ROS_DISTRO}-std-msgs \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+# Copy project files
+COPY pyproject.toml ./
+COPY edgevox/ ./edgevox/
+COPY voices/ ./voices/
+COPY launch/ ./launch/
+
+# Install EdgeVox into system Python (ROS 2 uses system Python)
+# Remove system-managed packages that block pip upgrades (no RECORD files)
+RUN rm -rf /usr/lib/python3/dist-packages/pygments* \
+           /usr/lib/python3/dist-packages/numpy* \
+           /usr/lib/python3/dist-packages/Pygments* \
+           /usr/lib/python3/dist-packages/numpy.libs \
+    && pip install --break-system-packages --no-cache-dir -e .
+
+# --- Runtime stage --------------------------------------------------------
+FROM ros:jazzy-ros-base
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV ROS_DISTRO=jazzy
+
+# Runtime-only system libraries (no git/curl/build tools)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    portaudio19-dev \
+    libsndfile1 \
+    alsa-utils \
+    pulseaudio-utils \
+    ros-${ROS_DISTRO}-std-msgs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Non-root user for security
+RUN groupadd --gid 1000 edgevox \
+    && useradd --uid 1000 --gid edgevox --create-home edgevox \
+    && usermod -aG audio edgevox
+
+# Copy installed Python packages and workspace from build stage
+COPY --from=build /usr/local/lib/python3.12/dist-packages /usr/local/lib/python3.12/dist-packages
+COPY --from=build /usr/local/bin /usr/local/bin
+COPY --from=build /usr/lib/python3/dist-packages /usr/lib/python3/dist-packages
+COPY --from=build /workspace /workspace
+
+WORKDIR /workspace
+
+# Models directory — mount from host to avoid re-downloading
+RUN mkdir -p /workspace/models && chown edgevox:edgevox /workspace/models
+VOLUME /workspace/models
+
+# Source ROS 2 in every shell
+RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /etc/bash.bashrc
+
+USER edgevox
+
+ENTRYPOINT ["/ros_entrypoint.sh"]
+CMD ["bash"]

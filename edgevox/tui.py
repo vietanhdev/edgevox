@@ -25,7 +25,7 @@ from collections import deque
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import numpy as np
 import sounddevice as sd
@@ -844,6 +844,7 @@ class EdgeVoxApp(App):
         spk_device: int | None = None,
         session_timeout: float = 30.0,
         ros2: bool = False,
+        ros2_namespace: str = "/edgevox",
     ):
         super().__init__()
         self._stt_model = stt_model
@@ -855,6 +856,7 @@ class EdgeVoxApp(App):
         self._wakeword_name = wakeword
         self._session_timeout = session_timeout
         self._ros2_enabled = ros2
+        self._ros2_namespace = ros2_namespace
 
         # Restore saved device prefs if not explicitly provided
         saved = _load_device_prefs()
@@ -1179,7 +1181,14 @@ class EdgeVoxApp(App):
         """
         from concurrent.futures import ThreadPoolExecutor
 
-        sentence_stream = stream_sentences(token_stream)
+        # Wrap token stream to publish each token to ROS2
+        def _token_tap(stream):
+            for token in stream:
+                if self._bridge:
+                    self._bridge.publish_bot_token(token)
+                yield token
+
+        sentence_stream = stream_sentences(_token_tap(token_stream))
         tts_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tts")
 
         full_reply_parts = []
@@ -1206,6 +1215,8 @@ class EdgeVoxApp(App):
                 first_sentence = False
             else:
                 self.call_from_thread(chat.write, Text(f"   {s}", style="#c9d1d9"))
+            if self._bridge:
+                self._bridge.publish_bot_sentence(s)
 
         # Collect sentences into a buffer so we can look ahead
         sentence_buf = []
@@ -1600,12 +1611,17 @@ class EdgeVoxApp(App):
         # ROS2 bridge
         if self._ros2_enabled:
             self.call_from_thread(chat.write, Text("  Initializing ROS2 bridge...", style="dim"))
-            from edgevox.ros2_bridge import NullBridge, create_bridge
+            from edgevox.integrations.ros2_bridge import NullBridge, create_bridge
 
-            self._bridge = create_bridge(enabled=True)
+            self._bridge = create_bridge(enabled=True, namespace=self._ros2_namespace)
             if not isinstance(self._bridge, NullBridge):
                 self._bridge.set_tts_callback(self._on_ros2_tts)
                 self._bridge.set_command_callback(self._on_ros2_command)
+                self._bridge.set_text_input_callback(self._on_ros2_text_input)
+                self._bridge.set_interrupt_callback(self._on_ros2_interrupt)
+                self._bridge.set_set_language_callback(self._on_ros2_set_language)
+                self._bridge.set_set_voice_callback(self._on_ros2_set_voice)
+                self._bridge.set_query_callback(self._on_ros2_query)
                 self.call_from_thread(chat.write, Text("  ROS2 bridge active!", style="green"))
             else:
                 self.call_from_thread(chat.write, Text("  ROS2 not available (rclpy not found)", style="yellow"))
@@ -1704,6 +1720,136 @@ class EdgeVoxApp(App):
         """Handle command from ROS2."""
         self._handle_command(command)
 
+    def _on_ros2_text_input(self, text: str):
+        """Handle text input from ROS2 — send through LLM + TTS, bypassing STT."""
+        self._handle_text_chat(text)
+
+    def _on_ros2_interrupt(self):
+        """Handle interrupt request from ROS2."""
+        self._on_interrupt()
+
+    def _on_ros2_set_language(self, language: str):
+        """Handle language switch from ROS2."""
+        self._switch_language(language)
+
+    def _on_ros2_set_voice(self, voice: str):
+        """Handle voice switch from ROS2."""
+        self._switch_voice(voice)
+
+    def _on_ros2_query(self, query: str) -> dict | None:
+        """Handle query commands from ROS2 — return info dicts."""
+        if query == "list_voices":
+            cfg = get_lang(self._language)
+            if cfg.tts_backend == "kokoro":
+                all_kokoro = [
+                    "af_heart",
+                    "af_bella",
+                    "af_nicole",
+                    "af_sarah",
+                    "af_sky",
+                    "am_adam",
+                    "am_michael",
+                    "bf_emma",
+                    "bf_isabella",
+                    "bm_george",
+                    "bm_lewis",
+                    "ef_dora",
+                    "em_alex",
+                    "ff_siwis",
+                    "hf_alpha",
+                    "hm_omega",
+                    "if_sara",
+                    "im_nicola",
+                    "jf_alpha",
+                    "jm_beta",
+                    "pf_dora",
+                    "pm_alex",
+                    "zf_xiaobei",
+                    "zf_xiaoni",
+                    "zm_yunjian",
+                ]
+                prefix = cfg.kokoro_lang
+                matching = [v for v in all_kokoro if v.startswith(prefix)]
+                others = [v for v in all_kokoro if not v.startswith(prefix)]
+                voices = matching + others
+            elif cfg.tts_backend == "supertonic":
+                from edgevox.tts.supertonic import SUPERTONIC_VOICES
+
+                voices = list(SUPERTONIC_VOICES.keys())
+            elif cfg.tts_backend == "pythaitts":
+                voices = ["th-default"]
+            else:
+                from edgevox.tts import get_piper_voices
+
+                prefix = cfg.code + "-"
+                matching = [v for v in get_piper_voices() if v.startswith(prefix)]
+                others = [v for v in get_piper_voices() if not v.startswith(prefix)]
+                voices = matching + others
+            return {
+                "language": self._language,
+                "current_voice": self._voice,
+                "voices": voices,
+            }
+
+        elif query == "list_languages":
+            from edgevox.core.config import LANGUAGES
+
+            langs = {}
+            for code, cfg in sorted(LANGUAGES.items(), key=lambda x: x[1].name):
+                langs[code] = {
+                    "name": cfg.name,
+                    "stt_backend": cfg.stt_backend,
+                    "tts_backend": cfg.tts_backend,
+                }
+            return {"current": self._language, "languages": langs}
+
+        elif query == "hardware_info":
+            from edgevox.core.gpu import (
+                get_nvidia_gpu_name,
+                get_nvidia_used_mb,
+                get_nvidia_vram_gb,
+                get_ram_gb,
+                has_cuda,
+                has_metal,
+            )
+
+            return {
+                "cuda": has_cuda(),
+                "metal": has_metal(),
+                "gpu_name": get_nvidia_gpu_name(),
+                "vram_total_gb": get_nvidia_vram_gb(),
+                "vram_used_mb": get_nvidia_used_mb(),
+                "ram_gb": round(get_ram_gb(), 1),
+            }
+
+        elif query == "model_info":
+            info: dict[str, Any] = {
+                "language": self._language,
+                "voice": self._voice,
+            }
+            if self._stt:
+                info["stt"] = {
+                    "backend": self._stt._backend_name,
+                    "model_size": self._stt._model_size,
+                    "device": self._stt._device,
+                    "display_name": self._stt.display_name,
+                }
+            if self._llm:
+                info["llm"] = {
+                    "model_path": str(Path(self._llm._llm.model_path).name),
+                    "device": _get_gpu_info()["backend"],
+                }
+            if self._tts:
+                cfg = get_lang(self._language)
+                info["tts"] = {
+                    "backend": cfg.tts_backend,
+                    "voice": self._voice,
+                    "sample_rate": self._tts.sample_rate,
+                }
+            return info
+
+        return None
+
     # --- Audio callbacks ---
 
     def _on_level(self, level: float):
@@ -1726,6 +1872,8 @@ class EdgeVoxApp(App):
                 detected = self._wakeword.detect(frame)
                 if detected:
                     log.info(f"Wake word detected: {detected}")
+                    if self._bridge:
+                        self._bridge.publish_wakeword(detected)
                     self._start_session()
                     return
         except Exception:
@@ -2017,6 +2165,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Seconds of silence before wakeword session ends (default: 30)",
     )
     parser.add_argument("--ros2", action="store_true", help="Enable ROS2 bridge (publishes to /edgevox/* topics)")
+    parser.add_argument(
+        "--ros2-namespace",
+        type=str,
+        default="/edgevox",
+        help="ROS2 namespace for the EdgeVox node (default: /edgevox)",
+    )
     parser.add_argument("--text-mode", action="store_true", help="Text-only mode, no mic (simple-ui only)")
 
     # Web UI options
@@ -2059,6 +2213,7 @@ def _run_tui(args: argparse.Namespace) -> None:
         spk_device=args.spk,
         session_timeout=args.session_timeout,
         ros2=args.ros2,
+        ros2_namespace=args.ros2_namespace,
     )
     app.run()
 

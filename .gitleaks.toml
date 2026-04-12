@@ -14,7 +14,7 @@ paths = [
   '''(^|/)uv\.lock$''',
   '''(^|/)package-lock\.json$''',
   '''(^|/)pnpm-lock\.yaml$''',
-  '''(^|/)website/node_modules/''',
+  '''(^|/)node_modules/''',
   '''(^|/)docs/''',
   '''\.(gguf|onnx|bin|pt|pth|safetensors|ckpt)$''',
   '''\.(wav|mp3|flac|ogg)$''',

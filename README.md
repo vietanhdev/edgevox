@@ -23,7 +23,7 @@ No cloud APIs. No internet after setup. Fully private. Powered by Gemma 4.
 - **Interrupt support** — speak while bot is talking to cut it off
 - **Wake word detection** — "Hey Jarvis" / "Lily" (optional, via OpenWakeWord)
 - **Beautiful TUI** — ASCII logo, sparkline waveform, latency history, GPU/RAM monitor, model info panel
-- **ROS2 bridge** — publishes STT/TTS/state to ROS2 topics for robotics integration
+- **ROS2 bridge** — full robotics integration: streaming tokens, text input, interrupt, language/voice switching, wake word events, query APIs
 - **Slash commands** — `/reset`, `/lang`, `/voice`, `/say`, `/mictest`, `/model` in the TUI
 - **Chat export** — Ctrl+S to save conversation as markdown
 - **15 languages** — English, Vietnamese, French, Spanish, Hindi, Italian, Portuguese, Japanese, Chinese, Korean, German, Thai, Russian, Arabic, Indonesian
@@ -80,6 +80,9 @@ edgevox --wakeword "hey jarvis"
 # With ROS2 bridge (for robotics)
 edgevox --ros2
 
+# ROS2 with custom namespace (multi-robot)
+edgevox --ros2 --ros2-namespace /robot1/voice
+
 # CLI mode (simpler, no TUI)
 edgevox-cli
 
@@ -122,37 +125,67 @@ edgevox \
 
 ## ROS2 Integration
 
-EdgeVox can publish voice pipeline events to ROS2 topics, making it easy to add voice interaction to any robot.
+EdgeVox publishes voice pipeline events to ROS2 topics with proper QoS profiles, making it easy to add voice interaction to any robot. Topics use relative names under a configurable namespace (default `/edgevox`).
 
 ```bash
-# Install with ROS2 support
-uv pip install -e ".[ros2]"
+# Source ROS2 workspace (rclpy must be importable)
+source /opt/ros/jazzy/setup.bash
 
 # Run with ROS2 bridge
 edgevox --ros2
+
+# Custom namespace for multi-robot setups
+edgevox --ros2 --ros2-namespace /robot1/voice
+
+# Or use the launch file
+ros2 launch edgevox edgevox.launch.py namespace:=/robot1/voice language:=vi
 ```
 
 ### Published Topics
 
-| Topic | Type | Description |
-|-------|------|-------------|
-| `/edgevox/transcription` | `std_msgs/String` | User's speech (STT output) |
-| `/edgevox/response` | `std_msgs/String` | Bot's response text |
-| `/edgevox/state` | `std_msgs/String` | Pipeline state (listening, thinking, speaking) |
-| `/edgevox/audio_level` | `std_msgs/Float32` | Mic level (0.0-1.0) |
-| `/edgevox/metrics` | `std_msgs/String` | JSON latency metrics |
+All topic names are relative — shown here with the default `/edgevox` namespace.
+
+| Topic | Type | QoS | Description |
+|-------|------|-----|-------------|
+| `transcription` | `String` | Reliable | User's speech (STT output) |
+| `response` | `String` | Reliable | Bot's full response text |
+| `state` | `String` | Transient Local | Pipeline state (listening, transcribing, thinking, speaking, interrupted) |
+| `audio_level` | `Float32` | Best Effort | Mic level (0.0-1.0) |
+| `metrics` | `String` | Reliable | JSON latency metrics |
+| `bot_token` | `String` | Best Effort | Streaming LLM tokens |
+| `bot_sentence` | `String` | Reliable | Completed sentences (TTS chunks) |
+| `wakeword` | `String` | Reliable | Wake word detection events |
+| `info` | `String` | Reliable | JSON responses to query commands |
 
 ### Subscribed Topics
 
 | Topic | Type | Description |
 |-------|------|-------------|
-| `/edgevox/tts_request` | `std_msgs/String` | Send text for the bot to speak |
-| `/edgevox/command` | `std_msgs/String` | Commands: reset, mute, unmute |
+| `tts_request` | `String` | Send text for the bot to speak |
+| `text_input` | `String` | Send text to LLM (bypass STT) |
+| `interrupt` | `String` | Interrupt current bot response |
+| `set_language` | `String` | Switch language (e.g. `vi`, `fr`) |
+| `set_voice` | `String` | Switch TTS voice (e.g. `af_bella`) |
+| `command` | `String` | Commands: reset, mute, unmute, list_voices, list_languages, hardware_info, model_info |
+
+### Node Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `language` | string | `en` | Language ISO 639-1 code |
+| `voice` | string | `""` | TTS voice name |
+| `muted` | bool | `false` | Mute/unmute the microphone |
+
+```bash
+ros2 param set /edgevox/edgevox language vi
+ros2 param set /edgevox/edgevox muted true
+```
 
 ### Example: Robot Integration
 
 ```python
 import rclpy
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
 
 # Listen to what the user says
@@ -163,6 +196,13 @@ pub = node.create_publisher(String, '/edgevox/tts_request', 10)
 msg = String()
 msg.data = "I detected an obstacle ahead."
 pub.publish(msg)
+
+# Stream bot tokens (match BEST_EFFORT QoS)
+sensor_qos = QoSProfile(depth=5, reliability=ReliabilityPolicy.BEST_EFFORT)
+node.create_subscription(String, '/edgevox/bot_token', on_token, sensor_qos)
+
+# Switch language via parameter
+# ros2 param set /edgevox/edgevox language vi
 ```
 
 ## Architecture
@@ -188,7 +228,7 @@ pub.publish(msg)
                          |
                          v (optional)
                    +------------+
-                   | ROS2 Bridge|----> /edgevox/* topics
+                   | ROS2 Bridge|----> <namespace>/* topics
                    +------------+
 ```
 

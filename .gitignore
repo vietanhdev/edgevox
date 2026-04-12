@@ -77,10 +77,10 @@ logs/
 tmp/
 temp/
 
-# ---- VitePress / website ----
-website/node_modules/
-website/docs/.vitepress/dist/
-website/docs/.vitepress/cache/
+# ---- VitePress / docs site ----
+node_modules/
+docs/.vitepress/dist/
+docs/.vitepress/cache/
 
 # ---- Web UI source (Vite/React) ----
 # The built SPA is committed under edgevox/server/static/ — do NOT ignore it.

@@ -31,5 +31,5 @@ features:
     details: Rich terminal UI with slash commands, plus a Web UI served via FastAPI + WebSocket.
   - title: ROS2 Ready
     icon: 🤖
-    details: Optional ROS2 bridge for robotics. Publish transcriptions, subscribe to TTS commands.
+    details: Full ROS2 bridge for robotics — streaming tokens, text input, interrupt, language/voice switching, wake word events, and query APIs.
 ---

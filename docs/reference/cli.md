@@ -39,6 +39,7 @@ These options work across all modes:
 | `--wakeword` | none | Wake word phrase (e.g., "hey jarvis") |
 | `--session-timeout` | `30` | Seconds of silence before session ends (with wake word) |
 | `--ros2` | `false` | Enable ROS2 bridge |
+| `--ros2-namespace` | `/edgevox` | ROS2 namespace for the EdgeVox node |
 
 ## Web UI Options
 
@@ -82,4 +83,13 @@ edgevox --mic 2 --spk 4
 
 # Custom LLM model from HuggingFace
 edgevox --llm hf:bartowski/Phi-4-mini-instruct-GGUF:Phi-4-mini-instruct-Q4_K_M.gguf
+
+# ROS2 bridge for robotics
+edgevox --ros2
+
+# ROS2 with custom namespace (multi-robot)
+edgevox --ros2 --ros2-namespace /robot1/voice
+
+# ROS2 + wake word for hands-free robot
+edgevox --ros2 --wakeword "hey jarvis" --language vi
 ```

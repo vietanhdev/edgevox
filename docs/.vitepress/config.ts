@@ -7,7 +7,7 @@ export default withMermaid(
     description: "Sub-second local voice AI for robots and edge devices",
     lang: "en-US",
 
-    // Load docs from ./docs (synced from ../docs/)
+    // Docs live directly in this directory
     srcDir: ".",
     cleanUrls: true,
 
