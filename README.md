@@ -8,6 +8,8 @@
 
 ![EdgeVox TUI Screenshot](docs/public/screenshot.png)
 
+![MuJoCo Controlling](docs/public/robot_mujoco.png)
+
 ---
 
 **Agents + Skills + Workflows** &nbsp;|&nbsp; **2D sim (IR-SIM)** &nbsp;|&nbsp; **0.8s voice TTFT** &nbsp;|&nbsp; **15 languages** &nbsp;|&nbsp; **56 voices** &nbsp;|&nbsp; **ROS2-native**
