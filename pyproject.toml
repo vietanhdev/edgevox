@@ -69,6 +69,7 @@ edgevox = "edgevox.tui:main"
 edgevox-cli = "edgevox.cli.main:main"
 edgevox-setup = "edgevox.setup_models:main"
 edgevox-serve = "edgevox.server.main:main"
+edgevox-agent = "edgevox.examples.agents.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/vietanhdev/edgevox"

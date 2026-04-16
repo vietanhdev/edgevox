@@ -864,6 +864,9 @@ class EdgeVoxApp(App):
         ros2: bool = False,
         ros2_namespace: str = "/edgevox",
         aec_backend: str = "none",
+        tools=None,
+        on_tool_call=None,
+        banner_title: str | None = None,
     ):
         super().__init__()
         self._stt_model = stt_model
@@ -877,6 +880,10 @@ class EdgeVoxApp(App):
         self._ros2_enabled = ros2
         self._ros2_namespace = ros2_namespace
         self._aec_backend = aec_backend
+        self._tools = tools
+        self._on_tool_call = on_tool_call
+        if banner_title:
+            type(self).SUB_TITLE = banner_title
 
         # Restore saved device prefs if not explicitly provided
         saved = _load_device_prefs()
@@ -906,6 +913,34 @@ class EdgeVoxApp(App):
         self._processing = threading.Lock()
         self._interrupted = threading.Event()
         self._chat_log: list[tuple[str, str, str]] = []  # (timestamp, speaker, text)
+
+    def _make_chat_tool_hook(self, chat):
+        """Build an ``on_tool_call`` callback that routes tool-call results
+        into the chat RichLog so users can see what their agent is doing
+        mid-conversation. Also chains to any user-supplied callback."""
+        user_cb = self._on_tool_call
+
+        def hook(result):
+            if user_cb is not None:
+                with contextlib.suppress(Exception):
+                    user_cb(result)
+            if result.ok:
+                line = Text.assemble(
+                    ("   \u2937 ", "bold #f4a259"),
+                    (f"{result.name}", "bold #f4a259"),
+                    (f"({result.arguments}) ", "#f4a259"),
+                    ("\u2192 ", "dim"),
+                    (f"{result.result}", "#c9d1d9"),
+                )
+            else:
+                line = Text.assemble(
+                    ("   \u2937 ", "bold red"),
+                    (f"{result.name} failed: ", "bold red"),
+                    (f"{result.error}", "#ff8a8a"),
+                )
+            self.call_from_thread(chat.write, line)
+
+        return hook
 
     def compose(self) -> ComposeResult:
         mic_devices = list_input_devices()
@@ -1641,7 +1676,12 @@ class EdgeVoxApp(App):
 
         self.call_from_thread(chat.write, Text("  [2/3] Loading LLM...", style="dim"))
         t_load = time.perf_counter()
-        self._llm = LLM(model_path=self._llm_model, language=self._language)
+        self._llm = LLM(
+            model_path=self._llm_model,
+            language=self._language,
+            tools=self._tools,
+            on_tool_call=self._make_chat_tool_hook(chat),
+        )
         llm_name = Path(self._llm._llm.model_path).stem
         gpu_info = _get_gpu_info()
         llm_device = gpu_info["backend"]

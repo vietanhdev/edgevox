@@ -77,6 +77,21 @@ class InterruptFrame(Frame):
 
 
 @dataclass
+class StopFrame(Frame):
+    """Signals a hard stop request from the SafetyMonitor.
+
+    Distinct from :class:`InterruptFrame` — an ``InterruptFrame`` means
+    "user spoke over the bot, cut TTS." A ``StopFrame`` means "cancel
+    the current action and any in-flight skill goals right now, and do
+    not forward the user's utterance to the LLM." Skills in the agent
+    layer observe this through ``AgentContext.stop`` and call
+    :meth:`GoalHandle.cancel` on their in-flight goals.
+    """
+
+    reason: str = ""
+
+
+@dataclass
 class EndFrame(Frame):
     """Signals end of the current turn (LLM finished generating)."""
 

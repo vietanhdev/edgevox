@@ -54,6 +54,7 @@ export default withMermaid(
             items: [
               { text: "Languages", link: "/guide/languages" },
               { text: "Voice Pipeline", link: "/guide/pipeline" },
+              { text: "Agents & Tools", link: "/guide/agents" },
               { text: "TUI Commands", link: "/guide/commands" },
               { text: "ROS2 Integration", link: "/guide/ros2" },
             ],

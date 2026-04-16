@@ -11,10 +11,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import logging
 import signal
 import threading
 import time
+from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -29,6 +32,7 @@ from edgevox.core.frames import (
     TranscriptionFrame,
 )
 from edgevox.core.processors import (
+    AgentProcessor,
     LLMProcessor,
     PlaybackProcessor,
     SentenceSplitter,
@@ -38,6 +42,12 @@ from edgevox.core.processors import (
 from edgevox.llm import LLM
 from edgevox.stt import create_stt
 from edgevox.tts import create_tts
+
+if TYPE_CHECKING:
+    from edgevox.llm import Tool, ToolCallResult, ToolRegistry
+
+    ToolCallback = Callable[[ToolCallResult], None]
+    ToolsArg = Iterable[Callable[..., object] | Tool] | ToolRegistry | None
 
 log = logging.getLogger(__name__)
 
@@ -61,12 +71,35 @@ class VoiceBot:
         voice: str | None = None,
         language: str = "en",
         aec_backend: str = "none",
+        tools: ToolsArg = None,
+        on_tool_call: ToolCallback | None = None,
+        agent=None,
+        deps=None,
+        on_event=None,
     ):
         print("Loading models... (this may take a minute on first run)")
 
         t0 = time.perf_counter()
         self._stt = create_stt(language=language, model_size=stt_model, device=stt_device)
-        self._llm = LLM(model_path=llm_model, language=language)
+
+        self._agent = agent
+        self._deps = deps
+        self._on_event = on_event
+        # When an Agent is supplied we route through AgentProcessor so
+        # skills, ctx injection, and handoffs work. The LLM still backs
+        # the agent's leaves but with empty tools — the agent manages
+        # its own registry per-run.
+        self._llm = LLM(
+            model_path=llm_model,
+            language=language,
+            tools=None if agent is not None else tools,
+            on_tool_call=None if agent is not None else on_tool_call,
+        )
+        if agent is not None:
+            from edgevox.agents.workflow import _bind_llm_recursive
+
+            _bind_llm_recursive(agent, self._llm)
+
         self._tts = create_tts(language=language, voice=voice, backend=tts_backend)
         elapsed = time.perf_counter() - t0
         print(f"All models loaded in {elapsed:.1f}s")
@@ -89,11 +122,21 @@ class VoiceBot:
             duration = len(audio) / MIC_SAMPLE_RATE
             print(f"\n🎤 Heard {duration:.1f}s of speech, processing...")
 
-            # Build a fresh pipeline per turn
+            # Build a fresh pipeline per turn. Route through AgentProcessor
+            # when an Agent is wired — that path supports cancellable
+            # skills, ctx injection, and multi-agent handoffs.
+            if self._agent is not None:
+                llm_stage = AgentProcessor(
+                    agent=self._agent,
+                    deps=self._deps,
+                    on_event=self._on_event,
+                )
+            else:
+                llm_stage = LLMProcessor(self._llm)
             self._pipeline = Pipeline(
                 [
                     STTProcessor(self._stt, language=self._language),
-                    LLMProcessor(self._llm),
+                    llm_stage,
                     SentenceSplitter(),
                     TTSProcessor(self._tts),
                     PlaybackProcessor(),
@@ -169,7 +212,18 @@ class VoiceBot:
 
         signal.signal(signal.SIGINT, _handle_signal)
 
-        stop_event.wait()
+        # If the deps object exposes a main-thread render pump (e.g.
+        # IrSimEnvironment's matplotlib window), run it here on the
+        # main thread. All other work (STT, LLM, skill dispatch) is on
+        # worker threads via the recorder → pipeline callback chain.
+        pump_render = getattr(self._deps, "pump_render", None) if self._deps is not None else None
+        if pump_render is not None:
+            while not stop_event.is_set():
+                with contextlib.suppress(Exception):
+                    pump_render()
+                stop_event.wait(timeout=0.05)
+        else:
+            stop_event.wait()
         self._recorder.stop()
 
 
@@ -182,10 +236,12 @@ class TextBot:
         tts_backend: str | None = None,
         voice: str | None = None,
         language: str = "en",
+        tools: ToolsArg = None,
+        on_tool_call: ToolCallback | None = None,
     ):
         print("Loading models...")
         t0 = time.perf_counter()
-        self._llm = LLM(model_path=llm_model, language=language)
+        self._llm = LLM(model_path=llm_model, language=language, tools=tools, on_tool_call=on_tool_call)
         self._tts = create_tts(language=language, voice=voice, backend=tts_backend)
         elapsed = time.perf_counter() - t0
         print(f"Models loaded in {elapsed:.1f}s\n")

@@ -74,7 +74,7 @@ Models are hosted on `nrl-ai/edgevox-models` (HuggingFace) with fallback to upst
 - Read files before editing them. Don't propose changes to code you haven't looked at.
 - Run `ruff format` + `ruff check --fix` before declaring a task done.
 - Don't bypass hooks (`--no-verify`) — fix the underlying issue.
-- Don't add yourself or Claude as a commit author / co-author.
+- Don't add yourself or Claude as a commit author / co-author. Specifically: no `Co-Authored-By: Claude …` trailer, no `🤖 Generated with Claude Code` footer — commit messages end after the body, nothing else.
 - Prefer editing existing files over creating new ones; don't create README/docs files unless asked.
 - If a change touches the streaming pipeline, manually note the latency impact in the PR description.
 

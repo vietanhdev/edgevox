@@ -21,6 +21,7 @@ from edgevox.core.frames import (
     MetricsFrame,
     Processor,
     SentenceFrame,
+    StopFrame,
     TextFrame,
     TranscriptionFrame,
     TTSAudioFrame,
@@ -64,6 +65,63 @@ class STTProcessor(Processor):
                 yield TranscriptionFrame(text=text, stt_time=t_stt, audio_duration=audio_duration)
         else:
             yield frame
+
+    def on_interrupt(self):
+        self._interrupted = True
+
+
+# ---------------------------------------------------------------------------
+# SafetyMonitor — preempts on stop-words before the LLM is consulted
+# ---------------------------------------------------------------------------
+
+
+class SafetyMonitor(Processor):
+    """Checks STT output for stop-words and preempts the pipeline.
+
+    Sits between ``STTProcessor`` and ``LLMProcessor``. When it sees a
+    stop-word in a ``TranscriptionFrame``, it:
+
+    1. Does NOT forward the frame — the LLM never sees it.
+    2. Emits a :class:`StopFrame` downstream so the agent-layer
+       skill dispatcher can cancel any in-flight goals.
+    3. Calls ``on_stop()`` if provided, so the application can set
+       ``AgentContext.stop`` and wake up any worker threads.
+
+    Inspired by the Brown/CMU "Safety Chip" (ICRA 2024) constraint-
+    monitor pattern — safety reflexes must never share critical-path
+    latency with the LLM.
+    """
+
+    DEFAULT_STOP_WORDS: tuple[str, ...] = (
+        "stop",
+        "halt",
+        "freeze",
+        "abort",
+        "emergency",
+    )
+
+    def __init__(
+        self,
+        stop_words: tuple[str, ...] | None = None,
+        on_stop=None,
+    ):
+        self._stop_words = tuple(w.lower() for w in (stop_words or self.DEFAULT_STOP_WORDS))
+        self._on_stop = on_stop
+        self._interrupted = False
+
+    def process(self, frame: Frame) -> Generator[Frame, None, None]:
+        if isinstance(frame, TranscriptionFrame):
+            tokens = {t.strip(".,!?").lower() for t in frame.text.split()}
+            if tokens & set(self._stop_words):
+                log.info("SafetyMonitor: stop-word detected in %r", frame.text)
+                yield StopFrame(reason=f"stop-word in: {frame.text!r}")
+                if self._on_stop is not None:
+                    try:
+                        self._on_stop()
+                    except Exception:
+                        log.exception("SafetyMonitor on_stop raised")
+                return
+        yield frame
 
     def on_interrupt(self):
         self._interrupted = True
@@ -117,6 +175,83 @@ class LLMProcessor(Processor):
 
     def on_interrupt(self):
         self._interrupted = True
+
+
+# ---------------------------------------------------------------------------
+# Agent-driven LLM processor (routes through LLMAgent.run instead of LLM)
+# ---------------------------------------------------------------------------
+
+
+class AgentProcessor(Processor):
+    """Pipeline processor that drives an :class:`~edgevox.agents.Agent`.
+
+    Unlike :class:`LLMProcessor` which streams tokens from an ``LLM``,
+    this runs a full agent turn (``agent.run(transcription.text, ctx)``)
+    — which can involve tool calls, skill dispatch, handoffs, and
+    safety-event cancellation — and yields the final reply as a single
+    ``TextFrame`` + ``EndFrame``. Downstream sentence-splitting still
+    works naturally because the reply becomes one text chunk.
+
+    Wiring contract:
+
+    - ``agent``: any object implementing the ``Agent`` protocol.
+      Typically an ``LLMAgent`` or ``Router`` workflow pre-bound to a
+      shared ``LLM`` instance.
+    - ``deps``: passed through as ``AgentContext.deps`` (a
+      ``SimEnvironment``, ROS2 node, etc.).
+    - ``on_event``: optional observability callback that receives every
+      ``AgentEvent`` fired during a turn — ``tool_call``,
+      ``skill_goal``, ``handoff``, etc. Used by the REPL / TUI to
+      render live feedback.
+
+    Interruption: a pipeline-level ``pipeline.interrupt()`` call
+    triggers ``on_interrupt`` here, which sets ``ctx.stop`` on the
+    current turn's context so in-flight skills cancel immediately.
+    """
+
+    def __init__(self, agent, deps=None, on_event=None):
+        self.agent = agent
+        self.deps = deps
+        self.on_event = on_event
+        self._interrupted = False
+        self._active_ctx = None  # current turn's AgentContext, set per-frame
+
+    def process(self, frame: Frame) -> Generator[Frame, None, None]:
+        if self._interrupted:
+            return
+        if isinstance(frame, (TextFrame, TranscriptionFrame)):
+            from edgevox.agents import AgentContext, Session
+
+            # Pass input through first so downstream sees the transcription
+            yield frame
+            t0 = time.perf_counter()
+            ctx = AgentContext(
+                session=Session(),
+                deps=self.deps,
+                on_event=self.on_event,
+            )
+            self._active_ctx = ctx
+
+            try:
+                result = self.agent.run(frame.text, ctx)
+            except Exception:
+                log.exception("AgentProcessor.run raised")
+                yield EndFrame()
+                self._active_ctx = None
+                return
+
+            yield MetricsFrame(metrics={"ttft": time.perf_counter() - t0})
+            if result.reply:
+                yield TextFrame(text=result.reply)
+            yield EndFrame()
+            self._active_ctx = None
+        else:
+            yield frame
+
+    def on_interrupt(self):
+        self._interrupted = True
+        if self._active_ctx is not None:
+            self._active_ctx.stop.set()
 
 
 # ---------------------------------------------------------------------------

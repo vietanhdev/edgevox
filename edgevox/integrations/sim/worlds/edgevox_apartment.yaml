@@ -1,0 +1,74 @@
+# EdgeVox bundled IR-SIM world: a 10x10 apartment with four named rooms
+# and a central corridor separated by partial walls. The robot is a
+# diff-drive circle with a 2D LiDAR so you can see it sensing the
+# environment as it navigates.
+#
+# Waypoints declared in the Python adapter (IrSimEnvironment):
+#   kitchen     (8, 2)   bottom-right
+#   living_room (2, 2)   bottom-left
+#   bedroom     (8, 8)   top-right
+#   office      (2, 8)   top-left
+#   center      (5, 5)   middle
+#
+# Run the visual demo:
+#   edgevox-agent robot-irsim --text-mode
+# or
+#   edgevox-agent robot-irsim --simple-ui
+
+world:
+  height: 10
+  width: 10
+  step_time: 0.1
+  sample_time: 0.1
+  offset: [0, 0]
+  collision_mode: 'unobstructed'  # agents don't die from bumps during voice demos
+  control_mode: 'auto'
+  plot:
+    no_axis: false
+    saved_figure:
+      dpi: 150
+
+robot:
+  kinematics: {name: 'diff'}
+  shape: {name: 'circle', radius: 0.25}
+  state: [5, 5, 0]
+  goal: [5, 5, 0]
+  behavior: {name: 'dash'}
+  vel_max: [1.0, 2.0]
+  vel_min: [-1.0, -2.0]
+  color: '#1f77b4'
+  plot:
+    show_trajectory: true
+    show_goal: true
+    show_goal_text: true
+    show_text: true
+  sensors:
+    - name: 'lidar2d'
+      range_min: 0
+      range_max: 3
+      angle_range: 6.283185
+      number: 180
+      noise: false
+      alpha: 0.25
+
+# Walls — a partial central partition and four corner obstacles so the
+# scene reads as an apartment instead of an empty field.
+obstacle:
+  - shape: {name: 'linestring', vertices: [[0, 5], [4, 5]]}
+    state: [0, 0, 0]
+  - shape: {name: 'linestring', vertices: [[6, 5], [10, 5]]}
+    state: [0, 0, 0]
+  - shape: {name: 'linestring', vertices: [[5, 0], [5, 4]]}
+    state: [0, 0, 0]
+  - shape: {name: 'linestring', vertices: [[5, 6], [5, 10]]}
+    state: [0, 0, 0]
+
+  # Furniture in each room
+  - shape: {name: 'rectangle', length: 0.6, width: 0.6}
+    state: [1.5, 1.5, 0]     # living-room table
+  - shape: {name: 'rectangle', length: 0.6, width: 0.6}
+    state: [8.5, 1.5, 0]     # kitchen island
+  - shape: {name: 'rectangle', length: 0.6, width: 0.6}
+    state: [8.5, 8.5, 0]     # bedroom nightstand
+  - shape: {name: 'rectangle', length: 0.6, width: 0.6}
+    state: [1.5, 8.5, 0]     # office desk
