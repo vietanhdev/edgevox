@@ -1,0 +1,103 @@
+<mujoco model="edgevox_tabletop_arm">
+  <!--
+    Self-contained tabletop scene for the EdgeVox MuJoCo Tier 2a demo.
+
+    Geometry is intentionally simple so the adapter has zero external
+    asset dependencies (no Menagerie clone, no mesh files). A real
+    Franka Panda plugs in by pointing MujocoArmEnvironment(model_path=...)
+    at a local `mujoco_menagerie/franka_emika_panda/scene.xml`.
+  -->
+
+  <compiler angle="degree" coordinate="local"/>
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="implicitfast"/>
+
+  <default>
+    <joint damping="10" armature="0.01"/>
+    <geom contype="1" conaffinity="1" friction="1 0.05 0.001" solref="0.004 1"/>
+    <default class="rail">
+      <geom rgba="0.28 0.3 0.34 1"/>
+    </default>
+    <default class="carriage">
+      <geom rgba="0.6 0.6 0.65 1"/>
+    </default>
+    <default class="finger">
+      <geom rgba="0.18 0.2 0.22 1" friction="2 0.1 0.002"/>
+    </default>
+  </default>
+
+  <asset>
+    <texture name="skybox" type="skybox" builtin="gradient" rgb1="0.55 0.7 0.95" rgb2="0.08 0.12 0.22" width="256" height="256"/>
+    <texture name="grid" type="2d" builtin="checker" rgb1="0.18 0.22 0.28" rgb2="0.12 0.15 0.2" width="300" height="300"/>
+    <material name="floor" texture="grid" texrepeat="6 6" reflectance="0.05"/>
+    <material name="table_mat" rgba="0.48 0.32 0.18 1"/>
+    <material name="red_mat" rgba="0.9 0.15 0.15 1"/>
+    <material name="green_mat" rgba="0.15 0.82 0.28 1"/>
+    <material name="blue_mat" rgba="0.2 0.4 0.92 1"/>
+  </asset>
+
+  <worldbody>
+    <light name="top" pos="0 0 3" dir="0 0 -1" diffuse="0.8 0.8 0.8"/>
+    <light name="side" pos="1.5 1.5 2" dir="-0.5 -0.5 -1" diffuse="0.4 0.4 0.4"/>
+
+    <geom name="floor" type="plane" size="3 3 0.1" material="floor"/>
+
+    <body name="table" pos="0 0 0.4">
+      <geom type="box" size="0.5 0.5 0.02" material="table_mat"/>
+      <geom type="capsule" fromto="0.45 0.45 0 0.45 0.45 -0.4" size="0.02" rgba="0.32 0.2 0.1 1"/>
+      <geom type="capsule" fromto="-0.45 0.45 0 -0.45 0.45 -0.4" size="0.02" rgba="0.32 0.2 0.1 1"/>
+      <geom type="capsule" fromto="0.45 -0.45 0 0.45 -0.45 -0.4" size="0.02" rgba="0.32 0.2 0.1 1"/>
+      <geom type="capsule" fromto="-0.45 -0.45 0 -0.45 -0.45 -0.4" size="0.02" rgba="0.32 0.2 0.1 1"/>
+    </body>
+
+    <!-- XYZ gantry hanging over the table centre -->
+    <body name="rail_x" pos="0 0 1.05">
+      <joint name="slide_x" type="slide" axis="1 0 0" range="-0.35 0.35" damping="20"/>
+      <geom class="rail" type="box" size="0.025 0.5 0.02"/>
+
+      <body name="rail_y">
+        <joint name="slide_y" type="slide" axis="0 1 0" range="-0.35 0.35" damping="20"/>
+        <geom class="rail" type="box" size="0.06 0.06 0.025"/>
+
+        <body name="carriage_z">
+          <joint name="slide_z" type="slide" axis="0 0 1" range="-0.55 0.0" damping="25"/>
+          <geom class="carriage" type="capsule" fromto="0 0 0 0 0 -0.18" size="0.018"/>
+
+          <body name="gripper_base" pos="0 0 -0.18">
+            <geom class="carriage" type="box" size="0.055 0.035 0.015"/>
+
+            <!-- Static right finger -->
+            <geom class="finger" type="box" size="0.006 0.018 0.035" pos="0.045 0 -0.05"/>
+
+            <!-- Actuated left finger -->
+            <body name="left_finger" pos="-0.045 0 -0.05">
+              <joint name="finger" type="slide" axis="1 0 0" range="0 0.04" damping="4"/>
+              <geom class="finger" type="box" size="0.006 0.018 0.035"/>
+            </body>
+
+            <site name="ee_site" pos="0 0 -0.09" size="0.006" rgba="1 0 0 0.4"/>
+          </body>
+        </body>
+      </body>
+    </body>
+
+    <body name="red_cube" pos="0.18 0.12 0.45">
+      <freejoint/>
+      <geom type="box" size="0.025 0.025 0.025" material="red_mat" mass="0.08"/>
+    </body>
+    <body name="green_cube" pos="0.0 -0.15 0.45">
+      <freejoint/>
+      <geom type="box" size="0.025 0.025 0.025" material="green_mat" mass="0.08"/>
+    </body>
+    <body name="blue_cube" pos="-0.2 0.05 0.45">
+      <freejoint/>
+      <geom type="box" size="0.025 0.025 0.025" material="blue_mat" mass="0.08"/>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <position name="act_x" joint="slide_x" kp="10000" ctrlrange="-0.35 0.35"/>
+    <position name="act_y" joint="slide_y" kp="10000" ctrlrange="-0.35 0.35"/>
+    <position name="act_z" joint="slide_z" kp="10000" ctrlrange="-0.55 0.0"/>
+    <position name="act_finger" joint="finger" kp="500" ctrlrange="0 0.04"/>
+  </actuator>
+</mujoco>

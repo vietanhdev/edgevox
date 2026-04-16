@@ -53,6 +53,15 @@ def _lazy_subcommands() -> None:
     except ImportError:
         pass
 
+    # MuJoCo tabletop arm demo — optional, needs `edgevox[sim-mujoco]`.
+    try:
+        from edgevox.examples.agents.robot_panda import APP as PANDA_APP
+        from edgevox.examples.agents.robot_panda import main as panda_main
+
+        _register("robot-panda", PANDA_APP.description, panda_main)
+    except ImportError:
+        pass
+
 
 def _print_usage() -> None:
     _lazy_subcommands()

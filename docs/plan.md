@@ -20,16 +20,18 @@ This plan synthesizes research across eight frameworks (ADK, smolagents, Pipecat
 
 Classical robotics partitions the stack by latency budget. EdgeVox agents live ONLY in the deliberative layer. The wrong design produces robots that ignore "STOP."
 
-```
-┌─────────────────────────────────────────────────────────┐
-│   Deliberative (≤1 Hz)     EdgeVox agents + workflows   │  ← this plan
-├─────────────────────────────────────────────────────────┤
-│   Executive (10-50 Hz)     Skill library, BT ticking,   │  ← new in this plan
-│                             goal/feedback/cancel        │
-├─────────────────────────────────────────────────────────┤
-│   Reactive (≥100 Hz)       Motor control, watchdogs,    │  ← strictly off-limits
-│                             safety monitor (no LLM!)    │     to the LLM
-└─────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    D["**Deliberative** — ≤1 Hz<br/>EdgeVox agents + workflows<br/><em>← this plan</em>"]
+    E["**Executive** — 10–50 Hz<br/>Skill library, BT ticking,<br/>goal / feedback / cancel<br/><em>← new in this plan</em>"]
+    R["**Reactive** — ≥100 Hz<br/>Motor control, watchdogs,<br/>safety monitor (no LLM!)<br/><em>← strictly off-limits to the LLM</em>"]
+    D --> E --> R
+    classDef deliberative fill:#e8f0fe,stroke:#1a73e8,color:#0b3d91
+    classDef executive    fill:#fef7e0,stroke:#f9ab00,color:#7a4f01
+    classDef reactive     fill:#fce8e6,stroke:#d93025,color:#8a1d15
+    class D deliberative
+    class E executive
+    class R reactive
 ```
 
 **Rule:** the LLM never enters the reactive layer. Safety reflexes bypass it. Skills expose intents (`navigate_to(room)`), not control (`set_speed(mps)`). Every other choice flows from this.
@@ -42,11 +44,13 @@ EdgeVox's moat is *pure-Python, offline, laptop-friendly*. Any sim integration t
 
 Research revealed a sharp split between "hobbyist first-run" sim needs and "graduation-to-real-robot" sim needs. No single simulator serves both. The strategy is three tiers sharing one protocol:
 
-| Tier | Sim | Role | Dependencies | v1? |
+| Tier | Sim | Role | Dependencies | Ships in |
 |---|---|---|---|---|
-| **Tier 0** | Built-in headless toy world | Unit tests + trivial examples (`House`, `RobotState`) | None (pure Python stdlib) | Yes |
-| **Tier 1** | **IR-SIM** (hanruihua/ir-sim) | Day-one "pip install → matplotlib window → voice agent drives a 2D robot" | `pip install ir-sim` (one line, MIT, pure Python, active in April 2026) | Yes |
-| **Tier 2** | Gazebo Harmonic / MuJoCo | Graduation path for sim-to-real and manipulation-heavy workloads | Heavy — ROS2 or URDF/mesh | No (v2) |
+| **Tier 0** | Built-in headless toy world | Unit tests + trivial examples (`House`, `RobotState`) | None (pure Python stdlib) | v1 |
+| **Tier 1** | **IR-SIM** (hanruihua/ir-sim) | Day-one "pip install → matplotlib window → voice agent drives a 2D robot" | `pip install ir-sim` (one line, MIT, pure Python, active in April 2026) | v1 |
+| **Tier 2a** | **MuJoCo — tabletop arm** | 3D pick-and-place demo + mid-motion interrupts | `pip install 'edgevox[sim-mujoco]'` (self-contained gantry MJCF, no Menagerie clone) | **v1.1** |
+| **Tier 2b** | **MuJoCo — humanoid locomotion** | Pre-exported ONNX walking policy + voice commands | Same MuJoCo dep, adds an ONNX policy | **v1.2 (stretch)** |
+| **Tier 3** | Gazebo Harmonic / Isaac Sim | Sim-to-real graduation path | Heavy — ROS2 / RTX | No (v2) |
 
 **Why IR-SIM is the right Tier 1 pick:**
 
@@ -56,7 +60,7 @@ Research revealed a sharp split between "hobbyist first-run" sim needs and "grad
 - **Actively maintained** — v2.9.3 April 2026, 1552 commits, MIT licensed, contribution-welcoming.
 - **Honest limitations aligned with EdgeVox's graduation story** — no URDF, no ROS2, no sim-to-real claim. That's *correct* for Tier 1: IR-SIM is where you learn and validate agent logic; when you're ready to transfer, you graduate to Tier 2.
 
-**Why NOT MuJoCo as Tier 1:** technically excellent but 3D-first. You need meshes/URDFs before anything appears on screen, and headless rendering needs EGL/OSMesa setup. That's a day-two experience, not a day-one one.
+**Why NOT MuJoCo as Tier 1:** technically excellent but 3D-first. You need meshes/URDFs before anything appears on screen, and headless rendering needs EGL/OSMesa setup. That's a day-two experience, not a day-one one. MuJoCo still lands in v1.1 as a Tier 2 adapter — see [Tier 2 preview — MuJoCo phased rollout](#tier-2-preview--mujoco-phased-rollout) below.
 
 **Why NOT Gazebo as Tier 1:** 1-2 GB download, Ubuntu-only, requires ROS2 setup. Great Tier 2 target, wrong day-one pick.
 
@@ -89,36 +93,25 @@ Research revealed a sharp split between "hobbyist first-run" sim needs and "grad
 
 ## The 7-layer architecture
 
-```
-┌───────────────────────────────────────────────────────────────┐
-│ Layer 7: AgentApp (extended)                                  │
-│          CLI glue: TUI / simple-ui / text-mode                │
-├───────────────────────────────────────────────────────────────┤
-│ Layer 6: Pipeline integration (minimal change)                │
-│          LLMProcessor wraps an Agent instead of LLM           │
-│          SafetyMonitor sits between STT and LLM               │
-├───────────────────────────────────────────────────────────────┤
-│ Layer 5: Workflows (NEW — BT-shaped)                          │
-│          Sequence • Fallback • Loop • Router                  │
-│          + decorators: Retry • Timeout                        │
-├───────────────────────────────────────────────────────────────┤
-│ Layer 4: Agent (NEW)                                          │
-│          Agent ABC • LLMAgent • Session                       │
-│          AgentContext • AgentEvent • Handoff                  │
-├───────────────────────────────────────────────────────────────┤
-│ Layer 3: Skills (NEW — cancellable robot actions)             │
-│          Skill base • GoalHandle • RosActionSkill             │
-│          WorldState (reactive deps pattern)                   │
-├───────────────────────────────────────────────────────────────┤
-│ Layer 2: Tools (unchanged, tiny extension)                    │
-│          @tool • Tool • ToolRegistry • ToolCallResult         │
-├───────────────────────────────────────────────────────────────┤
-│ Layer 1: SimEnvironment (NEW — 3 tiers share one protocol)    │
-│          SimEnvironment ABC                                   │
-│          ToyWorld (stdlib) • IrSimEnvironment (IR-SIM)        │
-│          (v2: GazeboEnvironment • MuJoCoEnvironment)          │
-└───────────────────────────────────────────────────────────────┘
-Substrate: edgevox.llm.LLM (already supports tools, persona, history)
+```mermaid
+flowchart TB
+    L7["**Layer 7 — AgentApp** *(extended)*<br/>CLI glue: TUI · simple-ui · text-mode"]
+    L6["**Layer 6 — Pipeline integration** *(minimal change)*<br/>LLMProcessor wraps an Agent instead of LLM<br/>SafetyMonitor sits between STT and LLM"]
+    L5["**Layer 5 — Workflows** *(NEW — BT-shaped)*<br/>Sequence · Fallback · Loop · Router<br/>+ decorators: Retry · Timeout"]
+    L4["**Layer 4 — Agent** *(NEW)*<br/>Agent ABC · LLMAgent · Session<br/>AgentContext · AgentEvent · Handoff"]
+    L3["**Layer 3 — Skills** *(NEW — cancellable robot actions)*<br/>Skill base · GoalHandle · RosActionSkill<br/>WorldState (reactive deps pattern)"]
+    L2["**Layer 2 — Tools** *(unchanged, tiny extension)*<br/>@tool · Tool · ToolRegistry · ToolCallResult"]
+    L1["**Layer 1 — SimEnvironment** *(NEW — shared protocol across tiers)*<br/>SimEnvironment ABC<br/>ToyWorld (stdlib) · IrSimEnvironment · MujocoArmEnvironment *(v1.1)*<br/><em>v2: GazeboEnvironment</em>"]
+    SUB["Substrate: <code>edgevox.llm.LLM</code><br/>already supports tools, persona, history"]
+    L7 --> L6 --> L5 --> L4 --> L3 --> L2 --> L1 --> SUB
+    classDef app fill:#e8f0fe,stroke:#1a73e8,color:#0b3d91
+    classDef new fill:#e6f4ea,stroke:#34a853,color:#0d652d
+    classDef keep fill:#f1f3f4,stroke:#5f6368,color:#202124
+    classDef sub fill:#fef7e0,stroke:#f9ab00,color:#7a4f01
+    class L7,L6 app
+    class L5,L4,L3,L1 new
+    class L2 keep
+    class SUB sub
 ```
 
 ### Layer 1: SimEnvironment — NEW (`edgevox/agents/sim.py`)
@@ -422,6 +415,62 @@ def get_robot_pose(ctx: AgentContext) -> GoalHandle:
 
 **Zero LLM involvement on the safety path.**
 
+## Tier 2 preview — MuJoCo phased rollout
+
+MuJoCo enters as an optional Tier 2 adapter **without disrupting IR-SIM as the day-one default**. The bar is: `pip install 'edgevox[sim-mujoco]'`, one command, a viewer window opens, a talking arm moves cubes around. No Menagerie clone, no mesh hunting, no EGL/OSMesa on day one.
+
+```mermaid
+flowchart LR
+    subgraph P1["Phase 1 — Tabletop manipulation *(v1.1, in scope)*"]
+        A1[MujocoArmEnvironment] --> A2[move_to · grasp · release · goto_home]
+        A2 --> A3[Self-contained gantry MJCF<br/>3-DOF + 2-finger gripper + 3 cubes]
+        A3 --> A4[<code>edgevox-agent robot-panda</code><br/>voice pick-and-stack]
+    end
+    subgraph P2["Phase 2 — Humanoid locomotion *(v1.2, stretch)*"]
+        B1[Reuses MujocoArmEnvironment base] --> B2[Pre-exported ONNX walking policy]
+        B2 --> B3[walk_forward · turn · stop]
+        B3 --> B4[<code>edgevox-agent robot-humanoid</code>]
+    end
+    P1 -. shared adapter .-> P2
+    classDef p1 fill:#e6f4ea,stroke:#34a853,color:#0d652d
+    classDef p2 fill:#fef7e0,stroke:#f9ab00,color:#7a4f01
+    class A1,A2,A3,A4 p1
+    class B1,B2,B3,B4 p2
+```
+
+### Phase 1 — tabletop manipulation (v1.1)
+
+- **New file**: `edgevox/integrations/sim/mujoco_arm.py` — `MujocoArmEnvironment(SimEnvironment)`.
+- **Threading model mirrors IR-SIM**: physics runs on a daemon thread, `mujoco.viewer` pumps on the main thread via `MainThreadScheduler`. Rendering stays main-thread-only; physics stays thread-safe under an `RLock`.
+- **Bundled scene**: `edgevox/integrations/sim/worlds/tabletop_arm.xml` — self-contained MJCF. An XYZ gantry (3 prismatic actuators) with a 2-finger gripper above a table with three coloured cubes. Zero external meshes so the day-one install has no extra download. No IK solve is needed — Cartesian joints map directly to end-effector position.
+- **Grasping** uses a kinematic attach: when `grasp` succeeds within tolerance of an object's pose, the physics loop pins that body to the gripper site each tick. Trades physical realism for a demo that works reliably on commodity hardware without contact-friction tuning.
+- **Actions**: `move_to(x, y, z)`, `grasp(object_name)`, `release`, `get_ee_pose`, `list_objects`, `goto_home`.
+- **Safety path identical to IR-SIM**: `ctx.stop` → physics loop observes cancellation on the next tick → arm freezes, any active attach is preserved. `SafetyMonitor` stop-words still never reach the LLM.
+- **New example**: `edgevox/examples/agents/robot_panda.py`, registered as `edgevox-agent robot-panda`. Persona: "Panda, a terse pick-and-place assistant." Skills: the six above. The voice demo script is *"pick up the red cube and place it on the blue one"* → planner emits a three-skill sequence → user says *"stop"* → arm freezes mid-motion.
+- **New optional dep group**: `sim-mujoco = ["mujoco>=3.2"]`. Import-guarded exactly like `ir-sim`.
+
+**Phase 1 scope caps (what it explicitly does *not* do):**
+
+- No real Franka meshes in the bundled scene. Users who want the real Franka point `model_path=` at a local `mujoco_menagerie/franka_emika_panda/scene.xml` — the adapter is model-agnostic by construction.
+- No learned policies. Motion is scripted waypoints + linear interpolation in joint space.
+- No VLA / vision input. Object poses come directly from `mjData.xpos`.
+- No dexterous in-hand manipulation, no force feedback, no tactile sensing.
+
+### Phase 2 — humanoid locomotion (v1.2, stretch)
+
+Lands *after* Phase 1 is merged and stable. Reuses the `MujocoArmEnvironment` base (rename to `MujocoEnvironment` if the arm assumptions leak) so the threading, rendering, cancellation, and safety plumbing stay identical.
+
+- Loads a **pre-exported ONNX locomotion policy** (e.g. Unitree G1 walking). No in-repo RL training, no JAX/MJX dependency.
+- Skills are deliberately minimal: `walk_forward(distance)`, `turn(angle_deg)`, `stop`. No loco-manipulation.
+- **New example**: `edgevox/examples/agents/robot_humanoid.py`, registered as `edgevox-agent robot-humanoid`.
+- Cap scope to flat-ground walking. Stairs, terrain, falling recovery, and manipulation are explicitly out of scope.
+
+**Why Phase 2 is a stretch, not a requirement:**
+
+- Humanoid balance is sensitive to observation / action normalisation; policy integration can eat a week by itself.
+- The voice-interaction story is almost entirely in Phase 1 (natural-language spatial reasoning, mid-motion interrupt). Phase 2 is eye-candy on top.
+- If Phase 2 slips, ship it as "coming soon" in v1.2 docs and keep Phase 1 as the full MuJoCo story.
+
 ## Anti-patterns encoded in the design
 
 | Anti-pattern (from robotics research) | Encoded defense |
@@ -449,6 +498,9 @@ def get_robot_pose(ctx: AgentContext) -> GoalHandle:
 - `edgevox/agents/world_state.py` — WorldState base + helpers (~80 LOC)
 - `edgevox/integrations/sim/__init__.py`
 - `edgevox/integrations/sim/irsim.py` — **IR-SIM adapter** (~180 LOC, optional import)
+- `edgevox/integrations/sim/mujoco_arm.py` — **MuJoCo tabletop arm adapter** (v1.1, ~260 LOC, optional import)
+- `edgevox/integrations/sim/worlds/tabletop_arm.xml` — self-contained gantry MJCF scene
+- `edgevox/examples/agents/robot_panda.py` — voice pick-and-place demo
 - `edgevox/integrations/ros_skills.py` — `RosActionSkill` adapter (~120 LOC, optional import)
 - `edgevox/examples/agents/smart_home_router.py` — multi-agent router demo
 - `edgevox/examples/agents/robot_skills_demo.py` — skills + safety preempt with `ToyWorld`
@@ -468,7 +520,7 @@ def get_robot_pose(ctx: AgentContext) -> GoalHandle:
 - `edgevox/examples/agents/framework.py::AgentApp` — accept `agent=`, `skills=`, `deps=`, `stop_words=`
 - `edgevox/examples/agents/{home_assistant,robot_commander,dev_toolbox}.py` — distinct personas, migrate module globals to `ToyWorld`-backed `deps`
 - `edgevox/examples/agents/cli.py` — register `smart-home`, `robot-skills`, `robot-sim` subcommands
-- `pyproject.toml` — add `sim` optional dependency group: `sim = ["ir-sim>=2.9"]`
+- `pyproject.toml` — add `sim` optional dependency group: `sim = ["ir-sim>=2.9"]` and `sim-mujoco = ["mujoco>=3.2"]`
 - `docs/guide/agents.md` — new sections:
   - "Tools vs Skills" (latency classes, cancellability)
   - "Multi-agent workflows" (Router, Sequential, handoff cost math)
@@ -604,13 +656,16 @@ Suggested landing sequence so each phase is independently mergeable and testable
 6. **Phase 6: IR-SIM adapter** — `IrSimEnvironment`, bundled YAML world, `robot_irsim_demo` example, `edgevox-agent robot-sim` subcommand, optional dependency group.
 7. **Phase 7: ROS2 action adapter stub** — `RosActionSkill` import-guarded helper. Not wired into examples yet; exists for users.
 8. **Phase 8: Docs** — update `docs/guide/agents.md` with the five new sections. Cross-link from the new plan doc.
+9. **Phase 9: MuJoCo tabletop arm (v1.1)** — `MujocoArmEnvironment`, bundled `tabletop_arm.xml`, `robot_panda` example, `edgevox-agent robot-panda` subcommand, `sim-mujoco` optional dep group. Headless integration tests guarded by `pytest.importorskip("mujoco")`.
+10. **Phase 10: MuJoCo humanoid locomotion (v1.2, stretch)** — `robot_humanoid` example + pre-exported ONNX walking policy. Only lands if Phase 9 is stable and the policy integration stays inside one week.
 
-Phases 1-3 unlock the "agent builder" v1 positioning. Phases 4-7 unlock the "robotics framework" direction. Phase 8 closes the loop.
+Phases 1–3 unlock the "agent builder" v1 positioning. Phases 4–7 unlock the "robotics framework" direction. Phase 8 closes the doc loop. Phases 9–10 add the 3D demos.
 
 ## Out of scope for v1 (v2 candidates)
 
 - **Gazebo Harmonic adapter** (`edgevox/integrations/sim/gazebo.py`) — the sim-to-real graduation target. Adds when users demand it; the `SimEnvironment` protocol makes this a drop-in.
-- **MuJoCo adapter** (`edgevox/integrations/sim/mujoco.py`) — manipulation-heavy tier 2 option.
+- **Isaac Sim adapter** — RTX-mandatory; crosses the day-one install bar.
+- **Real Franka meshes / Menagerie bundling** — the v1.1 Phase 1 scene is self-contained. Users who want the real Franka point `model_path=` at their own `mujoco_menagerie` checkout.
 - **Parallel workflow** + multi-LLM instances (requires another GGUF loaded in RAM).
 - **Async `Agent.run_async()`** + `AsyncIterator[AgentEvent]`.
 - **Full BT exporter** (EdgeVox workflow tree → BT.CPP XML) for graduation to production robot planners.

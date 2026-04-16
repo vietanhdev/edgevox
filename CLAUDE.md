@@ -77,6 +77,7 @@ Models are hosted on `nrl-ai/edgevox-models` (HuggingFace) with fallback to upst
 - Don't add yourself or Claude as a commit author / co-author. Specifically: no `Co-Authored-By: Claude …` trailer, no `🤖 Generated with Claude Code` footer — commit messages end after the body, nothing else.
 - Prefer editing existing files over creating new ones; don't create README/docs files unless asked.
 - If a change touches the streaming pipeline, manually note the latency impact in the PR description.
+- **Prefer Mermaid diagrams over ASCII art** in any markdown doc (`docs/`, `website/`, `README.md`, PR descriptions). GitHub and VitePress render ```mermaid``` fenced blocks natively; hand-drawn box-and-line ASCII is harder to read, impossible to edit cleanly, and breaks under monospace-font changes. The only acceptable ASCII diagrams are directory trees (`├──` / `└──`) — those stay as-is.
 
 ## What NOT to do
 

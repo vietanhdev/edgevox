@@ -226,23 +226,23 @@ def test_set_light_rejects_unknown_room():
 
 ### How a tool call flows
 
-```
-user voice
-  ↓ STT
-  ↓
-LLM.chat_stream(text)
-  └─→ model completion → tool_calls? ─┐
-         ↓ yes                        │
-    ToolRegistry.dispatch(name, args) │
-         ↓                            │
-    on_tool_call(result) ─────────────┤
-         ↓                            │
-    append tool result to history ────┘
-    model completion → tool_calls? → (loop up to max_tool_hops)
-         ↓ no
-    final text reply
-  ↓
-TTS → speaker
+```mermaid
+flowchart TB
+    V[user voice] --> STT[STT]
+    STT --> LLM["<code>LLM.chat_stream(text)</code>"]
+    LLM --> MC{model completion<br/>tool_calls?}
+    MC -- yes --> TR["<code>ToolRegistry.dispatch(name, args)</code>"]
+    TR --> CB["<code>on_tool_call(result)</code>"]
+    CB --> APP[append tool result to history]
+    APP --> MC
+    MC -- "no (or max_tool_hops hit)" --> REPLY[final text reply]
+    REPLY --> TTS[TTS → speaker]
+    classDef io    fill:#e8f0fe,stroke:#1a73e8,color:#0b3d91
+    classDef model fill:#fef7e0,stroke:#f9ab00,color:#7a4f01
+    classDef loop  fill:#e6f4ea,stroke:#34a853,color:#0d652d
+    class V,STT,TTS io
+    class LLM,MC,REPLY model
+    class TR,CB,APP loop
 ```
 
 Tool execution is synchronous inside the agent loop, so a slow tool blocks the whole turn. The loop is capped at 3 hops by default; override with `LLM(max_tool_hops=N)`.
@@ -289,16 +289,18 @@ EdgeVox ships a robotics layer that covers all four. This section explains it fr
 
 Classical robotics partitions the stack by latency budget. EdgeVox agents live in the **deliberative** layer only. Everything faster than ~1 Hz belongs below.
 
-```
-┌─────────────────────────────────────────────────────────┐
-│ Deliberative (≤1 Hz)    EdgeVox agents + workflows     │
-├─────────────────────────────────────────────────────────┤
-│ Executive (10-50 Hz)    Skill library, goal/cancel,    │
-│                         behavior-tree workflows        │
-├─────────────────────────────────────────────────────────┤
-│ Reactive (≥100 Hz)      Motor control, watchdogs,      │
-│                         safety monitor (no LLM!)       │
-└─────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    D["**Deliberative** — ≤1 Hz<br/>EdgeVox agents + workflows"]
+    E["**Executive** — 10–50 Hz<br/>Skill library, goal / cancel,<br/>behavior-tree workflows"]
+    R["**Reactive** — ≥100 Hz<br/>Motor control, watchdogs,<br/>safety monitor (no LLM!)"]
+    D --> E --> R
+    classDef deliberative fill:#e8f0fe,stroke:#1a73e8,color:#0b3d91
+    classDef executive    fill:#fef7e0,stroke:#f9ab00,color:#7a4f01
+    classDef reactive     fill:#fce8e6,stroke:#d93025,color:#8a1d15
+    class D deliberative
+    class E executive
+    class R reactive
 ```
 
 **Rule:** the LLM never enters the reactive layer. Safety reflexes bypass it. Skills expose *intents* (`navigate_to(room)`), not *control* (`set_speed(mps)`). Every other choice in this section follows from this.
@@ -356,23 +358,21 @@ class AgentContext:
 
 ## Skills + safety preempt in one picture
 
-```
- User says "stop"
-        │
-        ▼
- STTProcessor → TranscriptionFrame("stop")
-        │
-        ▼
- SafetyMonitor ──► StopFrame   (LLM is never consulted)
-        │
-        ▼
- Pipeline.interrupt() sets ctx.stop.set()
-        │
-        ▼
- _dispatch_skill poll loop sees ctx.stop → handle.cancel()
-        │
-        ▼
- Sim/robot backend freezes the actuator on its next physics tick
+```mermaid
+flowchart TB
+    U["User says <em>stop</em>"]
+    S["STTProcessor<br/><code>TranscriptionFrame('stop')</code>"]
+    SM["SafetyMonitor → StopFrame<br/><em>(LLM is never consulted)</em>"]
+    P["<code>Pipeline.interrupt()</code><br/>sets <code>ctx.stop.set()</code>"]
+    D["<code>_dispatch_skill</code> poll loop<br/>sees <code>ctx.stop</code> → <code>handle.cancel()</code>"]
+    B["Sim / robot backend freezes the actuator<br/>on its next physics tick"]
+    U --> S --> SM --> P --> D --> B
+    classDef user fill:#e8f0fe,stroke:#1a73e8,color:#0b3d91
+    classDef safe fill:#fce8e6,stroke:#d93025,color:#8a1d15
+    classDef sys  fill:#fef7e0,stroke:#f9ab00,color:#7a4f01
+    class U,S user
+    class SM,P safe
+    class D,B sys
 ```
 
 The LLM never runs on the critical stop path. Stop-words land in a hardcoded set inside `SafetyMonitor`, propagate as a `StopFrame`, flip `ctx.stop`, and the skill dispatcher preempts in-flight goals. Total wall-clock: ~200 ms.

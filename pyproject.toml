@@ -50,6 +50,12 @@ gpu = [
 dtln = [
     "ai-edge-litert>=2.0",  # TFLite runtime for DTLN-aec neural echo cancellation
 ]
+sim = [
+    "ir-sim>=2.9",  # Tier 1 — 2D Python robot sim (IrSimEnvironment)
+]
+sim-mujoco = [
+    "mujoco>=3.2",  # Tier 2a — 3D tabletop arm (MujocoArmEnvironment)
+]
 # ros2: rclpy is a system package provided by the ROS2 workspace, not installable from PyPI
 dev = [
     "pytest>=7.0",
