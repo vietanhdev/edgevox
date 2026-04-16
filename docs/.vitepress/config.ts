@@ -4,7 +4,7 @@ import { withMermaid } from "vitepress-plugin-mermaid";
 export default withMermaid(
   defineConfig({
     title: "EdgeVox",
-    description: "Sub-second local voice AI for robots and edge devices",
+    description: "Offline voice agent framework for robots — agents, skills, workflows, 2D/3D simulation, sub-second voice pipeline",
     lang: "en-US",
 
     // Docs live directly in this directory
@@ -78,7 +78,7 @@ export default withMermaid(
       ],
 
       footer: {
-        message: "Sub-second local voice AI for robots and edge devices",
+        message: "Offline voice agent framework for robots",
         copyright: "MIT License",
       },
 

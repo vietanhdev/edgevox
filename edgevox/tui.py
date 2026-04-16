@@ -1,4 +1,4 @@
-"""EdgeVox TUI — Sub-second local voice AI for robots and edge devices.
+"""EdgeVox TUI — Offline voice agent framework for robots.
 
 Features:
 - Branded ASCII splash with model info panel
@@ -2107,7 +2107,7 @@ class EdgeVoxApp(App):
 def _build_parser() -> argparse.ArgumentParser:
     """Build the shared argument parser used by all UI modes."""
     parser = argparse.ArgumentParser(
-        description="EdgeVox — Sub-second local voice AI for robots and edge devices",
+        description="EdgeVox — Offline voice agent framework for robots",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
   edgevox                                          # TUI (default)

@@ -12,7 +12,7 @@
 
 ---
 
-**Agents + Skills + Workflows** &nbsp;|&nbsp; **2D sim (IR-SIM)** &nbsp;|&nbsp; **0.8s voice TTFT** &nbsp;|&nbsp; **15 languages** &nbsp;|&nbsp; **56 voices** &nbsp;|&nbsp; **ROS2-native**
+**Agents + Skills + Workflows** &nbsp;|&nbsp; **2D sim (IR-SIM)** &nbsp;|&nbsp; **3D sim (MuJoCo)** &nbsp;|&nbsp; **0.8s voice TTFT** &nbsp;|&nbsp; **15 languages** &nbsp;|&nbsp; **56 voices** &nbsp;|&nbsp; **ROS2-native**
 
 ---
 
@@ -20,10 +20,12 @@
 
 - **Voice is the interface** — streaming STT → LLM → TTS pipeline hits first audio in ~0.8 s on an RTX 3080, runs on a Jetson Orin Nano, CPU fallback on a laptop.
 - **Agents are the program model** — write `@tool` and `@skill` functions in Python; compose them with `Sequence`, `Fallback`, `Loop`, `Parallel`, and `Router` workflows; delegate across agents with OpenAI-SDK-style handoffs.
-- **Robots are the target** — cancellable skills with `GoalHandle`, hard-stop safety monitor that bypasses the LLM, three-tier simulation (stdlib → IR-SIM → sim-to-real planned), ROS2 bridge.
+- **Robots are the target** — cancellable skills with `GoalHandle`, hard-stop safety monitor that bypasses the LLM, three-tier simulation (stdlib → IR-SIM → MuJoCo), ROS2 bridge.
 - **Everything is offline** — no cloud APIs, no telemetry, no vendor lock. Gemma 4 via llama.cpp, faster-whisper, Kokoro/Piper/Supertonic TTS. Your mic audio never leaves the machine.
 
 ## 30-second demo
+
+**2D — IR-SIM (mobile robot navigation)**
 
 ```bash
 pip install 'edgevox[sim]'
@@ -31,17 +33,16 @@ edgevox-setup                      # downloads ~3 GB of models, one time
 edgevox-agent robot-irsim --text-mode
 ```
 
-A matplotlib window opens showing a 10×10 apartment with four rooms (kitchen, living room, bedroom, office). Type:
+A matplotlib window opens showing a 10×10 apartment with four rooms. Type "go to the kitchen" — the blue robot drives visibly. Say "stop" mid-flight and it halts in ~200 ms (the safety monitor preempts before the LLM is consulted). Swap `--text-mode` for `--simple-ui` to drive it by voice.
 
-```
-you: please go to the kitchen
-Scout: I have navigated to the kitchen.
-you: drive to the bedroom
-(mid-flight) you: stop
-Scout: Stopped.
+**3D — MuJoCo (tabletop arm pick-and-place)**
+
+```bash
+pip install 'edgevox[sim-mujoco]'
+edgevox-agent robot-panda --text-mode
 ```
 
-The blue robot drives visibly, stops in ~200 ms when you say "stop" (the safety monitor preempts before the LLM is consulted), resumes on the next command. Swap `--text-mode` for `--simple-ui` to drive it by voice.
+A MuJoCo viewer opens with a Franka Panda arm above a table with three colored cubes. Type "pick up the red cube" — the arm moves, grasps, and lifts. Voice commands control `move_to`, `grasp`, `release`, and `goto_home` skills.
 
 ## Features
 
@@ -54,9 +55,9 @@ The blue robot drives visibly, stops in ~200 ms when you say "stop" (the safety 
 - **Cancellable skills** — `GoalHandle` lifecycle with `poll` / `cancel` / `feedback`, mid-flight preempt in ~200 ms
 - **`SafetyMonitor`** — stop-word preempt before the LLM is consulted
 - **`EventBus`** — thread-safe pub/sub for observability, metrics, main-thread scheduling
-- **`SimEnvironment` protocol** — agent code swaps cleanly between `ToyWorld` (stdlib), `IrSimEnvironment` (IR-SIM), and (planned) MuJoCo / Gazebo adapters
+- **`SimEnvironment` protocol** — agent code swaps cleanly between `ToyWorld` (stdlib), `IrSimEnvironment` (IR-SIM), and `MujocoArmEnvironment` (MuJoCo)
 - **Parallel tool/skill dispatch** inside a single turn via `ThreadPoolExecutor`
-- **5 built-in example agents** — `home`, `robot`, `dev`, `robot-scout`, `robot-irsim`
+- **6 built-in example agents** — `home`, `robot`, `dev`, `robot-scout`, `robot-irsim`, `robot-panda`
 
 ### Voice pipeline (substrate)
 
@@ -148,6 +149,7 @@ The five built-in agents are subcommands of `edgevox-agent`:
 | `edgevox-agent dev` | Developer toolbox — arithmetic, unit conversion, notes |
 | `edgevox-agent robot-scout` | Full agent demo on `ToyWorld` (stdlib, no extra deps) |
 | `edgevox-agent robot-irsim` | Full agent demo on IR-SIM with matplotlib window |
+| `edgevox-agent robot-panda` | MuJoCo Franka Panda — voice pick-and-place |
 
 Each one supports `--text-mode`, `--simple-ui`, or (default) full TUI.
 
@@ -156,11 +158,11 @@ Each one supports `--text-mode`, `--simple-ui`, or (default) full TUI.
 | Tier | Sim | Dependencies | Role | Status |
 |---|---|---|---|---|
 | 0 | `ToyWorld` | stdlib only | unit tests, trivial examples | shipped |
-| 1 | `IrSimEnvironment` | `pip install ir-sim` | day-one 2D visual demo (matplotlib, diff-drive, LiDAR) | shipped |
-| 2 | MuJoCo | `pip install mujoco` | 3D physics, URDF, no ROS2 needed | planned |
-| 2 | Gazebo Harmonic | ROS2 + Ubuntu | sim-to-real graduation path | planned |
+| 1 | `IrSimEnvironment` | `pip install ir-sim` | 2D visual demo (matplotlib, diff-drive, LiDAR) | shipped |
+| 2 | `MujocoArmEnvironment` | `pip install mujoco` | 3D physics, Franka Panda pick-and-place | shipped |
+| 3 | Gazebo Harmonic | ROS2 + Ubuntu | sim-to-real graduation path | planned |
 
-All tiers implement the same `SimEnvironment` protocol — agent code doesn't change when you swap backends. The `robot-irsim` demo above is the Tier 1 experience.
+All tiers implement the same `SimEnvironment` protocol — agent code doesn't change when you swap backends. The `robot-irsim` demo is the Tier 1 experience; `robot-panda` is Tier 2.
 
 ## Voice pipeline
 
@@ -178,11 +180,11 @@ edgevox-cli --text-mode         # no microphone needed
 
 | Language | STT | TTS | Voices |
 |---|---|---|---|
-| English, French, Spanish, Hindi, Italian, Portuguese, Japanese, Chinese | faster-whisper | Kokoro | 25 |
-| Vietnamese | sherpa-onnx (Zipformer) | Piper | 20 |
-| German, Russian, Arabic, Indonesian | faster-whisper | Piper | varies |
-| Korean | faster-whisper | Supertonic | 10 |
-| Thai | faster-whisper | PyThaiTTS | 1 |
+| 🇺🇸 English, 🇫🇷 French, 🇪🇸 Spanish, 🇮🇳 Hindi, 🇮🇹 Italian, 🇧🇷 Portuguese, 🇯🇵 Japanese, 🇨🇳 Chinese | faster-whisper | Kokoro | 25 |
+| 🇻🇳 Vietnamese | sherpa-onnx (Zipformer) | Piper | 20 |
+| 🇩🇪 German, 🇷🇺 Russian, 🇸🇦 Arabic, 🇮🇩 Indonesian | faster-whisper | Piper | varies |
+| 🇰🇷 Korean | faster-whisper | Supertonic | 10 |
+| 🇹🇭 Thai | faster-whisper | PyThaiTTS | 1 |
 
 Models are hosted on [`nrl-ai/edgevox-models`](https://huggingface.co/nrl-ai/edgevox-models) (HuggingFace) with fallback to upstream repos.
 

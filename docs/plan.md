@@ -52,13 +52,13 @@ EdgeVox's moat is *pure-Python, offline, laptop-friendly*. Any sim integration t
 
 Research revealed a sharp split between "hobbyist first-run" sim needs and "graduation-to-real-robot" sim needs. No single simulator serves both. The strategy is three tiers sharing one protocol:
 
-| Tier | Sim | Role | Dependencies | Ships in |
+| Tier | Sim | Role | Dependencies | Status |
 |---|---|---|---|---|
-| **Tier 0** | Built-in headless toy world | Unit tests + trivial examples (`House`, `RobotState`) | None (pure Python stdlib) | v1 |
-| **Tier 1** | **IR-SIM** (hanruihua/ir-sim) | Day-one "pip install → matplotlib window → voice agent drives a 2D robot" | `pip install ir-sim` (one line, MIT, pure Python, active in April 2026) | v1 |
-| **Tier 2a** | **MuJoCo — tabletop arm** | 3D pick-and-place demo + mid-motion interrupts | `pip install 'edgevox[sim-mujoco]'` (self-contained gantry MJCF, no Menagerie clone) | **v1.1** |
-| **Tier 2b** | **MuJoCo — humanoid locomotion** | Pre-exported ONNX walking policy + voice commands | Same MuJoCo dep, adds an ONNX policy | **v1.2 (stretch)** |
-| **Tier 3** | Gazebo Harmonic / Isaac Sim | Sim-to-real graduation path | Heavy — ROS2 / RTX | No (v2) |
+| **Tier 0** | Built-in headless toy world | Unit tests + trivial examples (`House`, `RobotState`) | None (pure Python stdlib) | shipped |
+| **Tier 1** | **IR-SIM** (hanruihua/ir-sim) | Day-one "pip install → matplotlib window → voice agent drives a 2D robot" | `pip install ir-sim` (one line, MIT, pure Python, active in April 2026) | shipped |
+| **Tier 2** | **MuJoCo — tabletop arm** | 3D pick-and-place demo + mid-motion interrupts | `pip install 'edgevox[sim-mujoco]'` (Franka Panda, auto-fetched from HuggingFace) | shipped |
+| **Tier 2b** | **MuJoCo — humanoid locomotion** | Pre-exported ONNX walking policy + voice commands | Same MuJoCo dep, adds an ONNX policy | planned |
+| **Tier 3** | Gazebo Harmonic / Isaac Sim | Sim-to-real graduation path | Heavy — ROS2 / RTX | planned (v2) |
 
 **Why IR-SIM is the right Tier 1 pick:**
 
@@ -121,7 +121,7 @@ WorldState (reactive deps pattern)`"]
 @tool · Tool · ToolRegistry · ToolCallResult`"]
     L1["`**Layer 1 — SimEnvironment** *(NEW — shared protocol across tiers)*
 SimEnvironment ABC
-ToyWorld (stdlib) · IrSimEnvironment · MujocoArmEnvironment *(v1.1)*
+ToyWorld (stdlib) · IrSimEnvironment · MujocoArmEnvironment
 *v2: GazeboEnvironment*`"]
     SUB["`Substrate: edgevox.llm.LLM
 already supports tools, persona, history`"]
@@ -437,20 +437,20 @@ def get_robot_pose(ctx: AgentContext) -> GoalHandle:
 
 **Zero LLM involvement on the safety path.**
 
-## Tier 2 preview — MuJoCo phased rollout
+## Tier 2 — MuJoCo phased rollout
 
-MuJoCo enters as an optional Tier 2 adapter **without disrupting IR-SIM as the day-one default**. The bar is: `pip install 'edgevox[sim-mujoco]'`, one command, a viewer window opens, a talking arm moves cubes around. No Menagerie clone, no mesh hunting, no EGL/OSMesa on day one.
+MuJoCo is an optional Tier 2 adapter **without disrupting IR-SIM as the day-one default**. The bar is: `pip install 'edgevox[sim-mujoco]'`, one command, a viewer window opens, a talking arm moves cubes around. No Menagerie clone, no mesh hunting, no EGL/OSMesa on day one.
 
 ```mermaid
 flowchart LR
-    subgraph P1["Phase 1 — Tabletop manipulation (v1.1, in scope)"]
+    subgraph P1["Phase 1 — Tabletop manipulation (shipped)"]
         A1[MujocoArmEnvironment] --> A2[move_to · grasp · release · goto_home]
         A2 --> A3["`Self-contained gantry MJCF
 3-DOF + 2-finger gripper + 3 cubes`"]
         A3 --> A4["`edgevox-agent robot-panda
 voice pick-and-stack`"]
     end
-    subgraph P2["Phase 2 — Humanoid locomotion (v1.2, stretch)"]
+    subgraph P2["Phase 2 — Humanoid locomotion (planned)"]
         B1[Reuses MujocoArmEnvironment base] --> B2[Pre-exported ONNX walking policy]
         B2 --> B3[walk_forward · turn · stop]
         B3 --> B4["edgevox-agent robot-humanoid"]
@@ -462,7 +462,7 @@ voice pick-and-stack`"]
     class B1,B2,B3,B4 p2
 ```
 
-### Phase 1 — tabletop manipulation (v1.1)
+### Phase 1 — tabletop manipulation (shipped)
 
 - **New file**: `edgevox/integrations/sim/mujoco_arm.py` — `MujocoArmEnvironment(SimEnvironment)`.
 - **Threading model mirrors IR-SIM**: physics runs on a daemon thread, `mujoco.viewer` pumps on the main thread via `MainThreadScheduler`. Rendering stays main-thread-only; physics stays thread-safe under an `RLock`.
@@ -480,7 +480,7 @@ voice pick-and-stack`"]
 - No VLA / vision input. Object poses come directly from `mjData.xpos`.
 - No dexterous in-hand manipulation, no force feedback, no tactile sensing.
 
-### Phase 2 — humanoid locomotion (v1.2, stretch)
+### Phase 2 — humanoid locomotion (planned)
 
 Lands *after* Phase 1 is merged and stable. Reuses the `MujocoArmEnvironment` base (rename to `MujocoEnvironment` if the arm assumptions leak) so the threading, rendering, cancellation, and safety plumbing stay identical.
 

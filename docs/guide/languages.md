@@ -8,17 +8,17 @@ These languages have native TTS support via Kokoro-82M:
 
 | Language | Code | STT | TTS | Default Voice |
 |----------|------|-----|-----|---------------|
-| English | `en` | Whisper | Kokoro (`a`) | `af_heart` |
-| English (British) | `en-gb` | Whisper | Kokoro (`b`) | `bf_emma` |
-| French | `fr` | Whisper | Kokoro (`f`) | `ff_siwis` |
-| Spanish | `es` | Whisper | Kokoro (`e`) | `ef_dora` |
-| Hindi | `hi` | Whisper | Kokoro (`h`) | `hf_alpha` |
-| Italian | `it` | Whisper | Kokoro (`i`) | `if_sara` |
-| Portuguese | `pt` | Whisper | Kokoro (`p`) | `pf_dora` |
-| Japanese | `ja` | Whisper | Kokoro (`j`) | `jf_alpha` |
-| Chinese | `zh` | Whisper | Kokoro (`z`) | `zf_xiaobei` |
+| 🇺🇸 English | `en` | Whisper | Kokoro (`a`) | `af_heart` |
+| 🇬🇧 English (British) | `en-gb` | Whisper | Kokoro (`b`) | `bf_emma` |
+| 🇫🇷 French | `fr` | Whisper | Kokoro (`f`) | `ff_siwis` |
+| 🇪🇸 Spanish | `es` | Whisper | Kokoro (`e`) | `ef_dora` |
+| 🇮🇳 Hindi | `hi` | Whisper | Kokoro (`h`) | `hf_alpha` |
+| 🇮🇹 Italian | `it` | Whisper | Kokoro (`i`) | `if_sara` |
+| 🇧🇷 Portuguese | `pt` | Whisper | Kokoro (`p`) | `pf_dora` |
+| 🇯🇵 Japanese | `ja` | Whisper | Kokoro (`j`) | `jf_alpha` |
+| 🇨🇳 Chinese | `zh` | Whisper | Kokoro (`z`) | `zf_xiaobei` |
 
-## Vietnamese (Specialized)
+## 🇻🇳 Vietnamese (Specialized)
 
 Vietnamese uses dedicated models for best accuracy:
 
@@ -35,12 +35,12 @@ These languages use Piper VITS models — lightweight and real-time on CPU:
 
 | Language | Code | STT | Voices |
 |----------|------|-----|--------|
-| German | `de` | Whisper | 10 voices (`de-thorsten`, `de-kerstin`, `de-ramona`, ...) |
-| Russian | `ru` | Whisper | 4 voices (`ru-irina`, `ru-dmitri`, `ru-denis`, `ru-ruslan`) |
-| Arabic | `ar` | Whisper | 2 voices (`ar-kareem`, `ar-kareem-low`) |
-| Indonesian | `id` | Whisper | 1 voice (`id-news`) |
+| 🇩🇪 German | `de` | Whisper | 10 voices (`de-thorsten`, `de-kerstin`, `de-ramona`, ...) |
+| 🇷🇺 Russian | `ru` | Whisper | 4 voices (`ru-irina`, `ru-dmitri`, `ru-denis`, `ru-ruslan`) |
+| 🇸🇦 Arabic | `ar` | Whisper | 2 voices (`ar-kareem`, `ar-kareem-low`) |
+| 🇮🇩 Indonesian | `id` | Whisper | 1 voice (`id-news`) |
 
-## Korean (Supertonic)
+## 🇰🇷 Korean (Supertonic)
 
 Korean uses the Supertonic-2 ONNX model — real-time on CPU with 10 voice styles:
 
@@ -49,7 +49,7 @@ Korean uses the Supertonic-2 ONNX model — real-time on CPU with 10 voice style
 | `ko-F1` .. `ko-F5` | 5 female voices (calm, bright, clear, crisp, kind) |
 | `ko-M1` .. `ko-M5` | 5 male voices (lively, deep, polished, soft, warm) |
 
-## Thai (PyThaiTTS)
+## 🇹🇭 Thai (PyThaiTTS)
 
 Thai uses PyThaiTTS with a Tacotron2 ONNX model (Apache 2.0):
 

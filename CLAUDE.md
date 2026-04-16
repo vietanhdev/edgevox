@@ -1,6 +1,6 @@
 # EdgeVox — Claude Code Rules
 
-Sub-second local voice AI for robots and edge devices. Pure-Python package, no cloud dependencies, runs on CPU/CUDA/Metal.
+Offline voice agent framework for robots. Pure-Python package, no cloud dependencies, runs on CPU/CUDA/Metal.
 
 ## Project layout
 
