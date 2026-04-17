@@ -46,6 +46,7 @@ import contextlib
 import logging
 import threading
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Literal
 
@@ -135,6 +136,104 @@ def _detect_kind(path: Path) -> str:
     return "gantry" if "slide_x" in text and "slide_y" in text else "franka"
 
 
+# Minimum constraint-buffer sizes that cover the tabletop scenes comfortably.
+# Raw MuJoCo defaults (nconmax=-1 → small auto) occasionally trip
+# ``mj_makeConstraint: nefc under-allocation`` on the downloaded Franka
+# scene during viewer warmup. We pre-inject a ``<size>`` element into the
+# compiled XML so the constraint pool is big enough from the start.
+_MUJOCO_MIN_NCONMAX = 500
+_MUJOCO_MIN_NJMAX = 1000
+
+
+def _load_model_with_safe_sizes(scene_path: Path) -> mujoco.MjModel:
+    """Load a scene, retrying with injected constraint-buffer sizes on failure.
+
+    The fast path is just :func:`mujoco.MjModel.from_xml_path` — that
+    handles ``<include>`` directives, relative mesh paths, and every
+    other compiler quirk correctly. Only if that raises (scene is
+    malformed or its default ``<size>`` under-allocates) do we rewrite
+    the XML in-memory to inject a larger ``<size nconmax=... njmax=...>``
+    and recompile via :func:`from_xml_string` with an asset map that
+    covers both meshes and any sibling XML files referenced by
+    ``<include>``.
+    """
+    try:
+        return mujoco.MjModel.from_xml_path(str(scene_path))
+    except Exception as first_exc:
+        log.info("from_xml_path failed for %s (%s); retrying with size patch", scene_path, first_exc)
+        primary = first_exc
+
+    try:
+        raw = scene_path.read_text(encoding="utf-8")
+        patched = _inject_size_element(raw, nconmax=_MUJOCO_MIN_NCONMAX, njmax=_MUJOCO_MIN_NJMAX)
+        assets = _collect_scene_assets(scene_path.parent)
+        return mujoco.MjModel.from_xml_string(patched, assets=assets)
+    except Exception as recovery_exc:
+        # Re-raise the ORIGINAL failure so the user sees the real cause;
+        # the recovery attempt is a best-effort wrapper.
+        log.debug("size-patched recompile also failed: %s", recovery_exc)
+        raise primary from recovery_exc
+
+
+def _inject_size_element(xml: str, *, nconmax: int, njmax: int) -> str:
+    """Insert or update the ``<size nconmax=... njmax=...>`` element.
+
+    Non-destructive: preserves an existing ``<size>`` if it already
+    declares equal-or-larger values. Uses xml.etree.ElementTree so we
+    don't corrupt comments or indentation more than necessary.
+    """
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        log.warning("Could not parse MuJoCo XML for size injection; returning untouched")
+        return xml
+
+    size_el = root.find("size")
+    if size_el is None:
+        size_el = ET.Element("size")
+        root.insert(0, size_el)
+    # Only bump if the existing value is smaller than our min.
+    _bump_attr(size_el, "nconmax", nconmax)
+    _bump_attr(size_el, "njmax", njmax)
+    return ET.tostring(root, encoding="unicode")
+
+
+def _bump_attr(element: Any, name: str, minimum: int) -> None:
+    raw = element.get(name)
+    try:
+        current = int(raw) if raw is not None else 0
+    except ValueError:
+        current = 0
+    if current < minimum:
+        element.set(name, str(minimum))
+
+
+def _collect_scene_assets(asset_dir: Path) -> dict[str, bytes]:
+    """Build an asset map for ``from_xml_string``.
+
+    Includes sibling XMLs (for ``<include>`` directives) + meshes +
+    textures. Returns empty when ``asset_dir`` has nothing loadable so
+    the pure gantry scene stays zero-overhead.
+    """
+    assets: dict[str, bytes] = {}
+    if not asset_dir.is_dir():
+        return assets
+    # XML first so <include> resolution works; then common asset kinds.
+    for pattern in ("*.xml", "*.stl", "*.obj", "*.msh", "*.png", "*.jpg", "*.jpeg"):
+        for path in asset_dir.rglob(pattern):
+            try:
+                rel = str(path.relative_to(asset_dir))
+            except ValueError:
+                continue
+            try:
+                data = path.read_bytes()
+            except OSError:
+                continue
+            assets[rel] = data
+            assets.setdefault(path.name, data)
+    return assets
+
+
 class MujocoArmEnvironment:
     """MuJoCo-backed :class:`SimEnvironment` for tabletop manipulation.
 
@@ -177,7 +276,7 @@ class MujocoArmEnvironment:
         self._tick_interval = tick_interval
         self._steps_per_tick = max(1, steps_per_tick)
 
-        self._model = mujoco.MjModel.from_xml_path(str(scene_path))
+        self._model = _load_model_with_safe_sizes(scene_path)
         self._data = mujoco.MjData(self._model)
 
         if kind == "franka":
@@ -215,10 +314,14 @@ class MujocoArmEnvironment:
         self._grasp_target: str | None = None
         self._grasp_phase: str | None = None
 
-        self._phys_stop = threading.Event()
-        self._phys_thread = threading.Thread(target=self._physics_loop, name="mujoco-physics", daemon=True)
-        self._phys_thread.start()
-
+        # Viewer must be launched BEFORE the physics thread starts so its
+        # initial ``mj_forward`` doesn't race with concurrent ``mj_step``
+        # calls on the same ``mjData`` (MuJoCo's data struct is not
+        # thread-safe). During the run, the physics tick takes the
+        # viewer's internal lock via ``viewer.lock()`` so the viewer's
+        # render thread and our physics thread never touch mjData at the
+        # same time — without that coordination, a segfault in
+        # ``mj_step`` is reliable.
         self._viewer: Any | None = None
         if render:
             try:
@@ -227,6 +330,10 @@ class MujocoArmEnvironment:
                 log.exception("mujoco.viewer.launch_passive failed; continuing headless")
                 self._viewer = None
                 self._render = False
+
+        self._phys_stop = threading.Event()
+        self._phys_thread = threading.Thread(target=self._physics_loop, name="mujoco-physics", daemon=True)
+        self._phys_thread.start()
 
     # ----- robot-kind init -----
 
@@ -327,8 +434,15 @@ class MujocoArmEnvironment:
 
     def tick_physics(self) -> None:
         """Advance physics by ``steps_per_tick`` ``mj_step`` calls and
-        update any active goal. Thread-safe."""
-        with self._lock:
+        update any active goal. Thread-safe.
+
+        When a viewer is attached we also take its internal lock so the
+        viewer's render thread and our physics thread never touch
+        ``mjData`` concurrently — MuJoCo is not thread-safe for
+        concurrent data access.
+        """
+        viewer_lock_cm = self._viewer.lock() if self._viewer is not None else contextlib.nullcontext()
+        with self._lock, viewer_lock_cm:
             for _ in range(self._steps_per_tick):
                 mujoco.mj_step(self._model, self._data)
                 self._apply_kinematic_attach_unlocked()
