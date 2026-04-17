@@ -4,7 +4,9 @@ EdgeVox is an **offline voice agent framework for robots** — agents, skills, w
 
 ![EdgeVox TUI Screenshot](/screenshot.png)
 
-![MuJoCo Panda Demo](/robot_mujoco.png)
+![MuJoCo Panda Demo](/robot_panda.png)
+
+![Unitree G1 Humanoid Demo](/robot_unitree_g1.png)
 
 ## What is EdgeVox?
 

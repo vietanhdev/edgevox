@@ -114,10 +114,7 @@ APP = AgentApp(
     skills=[navigate_to, navigate_xy, stop, get_pose],
     deps=None,
     stop_words=("stop", "halt", "freeze", "abort", "emergency"),
-    greeting=(
-        "Ranger online. I'm listening for a waypoint — try origin, ahead_1m, "
-        "or send me to an x/y coordinate."
-    ),
+    greeting=("Ranger online. I'm listening for a waypoint — try origin, ahead_1m, or send me to an x/y coordinate."),
     extra_args=[
         (
             ("--namespace",),

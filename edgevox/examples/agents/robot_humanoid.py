@@ -38,7 +38,7 @@ HUMANOID_PERSONA = (
 
 @skill(latency_class="slow", timeout_s=20.0)
 def walk_forward(distance: float, ctx: AgentContext) -> GoalHandle:
-    """Walk forward by ``distance`` metres (positive values only, 0.1–2.0 m).
+    """Walk forward by ``distance`` metres (positive values only, 0.1-2.0 m).
 
     Args:
         distance: metres to walk forward.
@@ -48,7 +48,7 @@ def walk_forward(distance: float, ctx: AgentContext) -> GoalHandle:
 
 @skill(latency_class="slow", timeout_s=20.0)
 def walk_backward(distance: float, ctx: AgentContext) -> GoalHandle:
-    """Walk backward by ``distance`` metres (positive values only, 0.1–1.0 m).
+    """Walk backward by ``distance`` metres (positive values only, 0.1-1.0 m).
 
     Args:
         distance: metres to walk backward.
@@ -61,7 +61,7 @@ def turn_left(degrees: float, ctx: AgentContext) -> GoalHandle:
     """Turn left (counterclockwise) by ``degrees``.
 
     Args:
-        degrees: turn angle in degrees, typically 15–180.
+        degrees: turn angle in degrees, typically 15-180.
     """
     return ctx.deps.apply_action("turn_left", degrees=degrees)
 
@@ -71,7 +71,7 @@ def turn_right(degrees: float, ctx: AgentContext) -> GoalHandle:
     """Turn right (clockwise) by ``degrees``.
 
     Args:
-        degrees: turn angle in degrees, typically 15–180.
+        degrees: turn angle in degrees, typically 15-180.
     """
     return ctx.deps.apply_action("turn_right", degrees=degrees)
 

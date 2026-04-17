@@ -8,7 +8,9 @@
 
 ![EdgeVox TUI Screenshot](docs/public/screenshot.png)
 
-![MuJoCo Controlling](docs/public/robot_mujoco.png)
+![MuJoCo Franka Panda](docs/public/robot_panda.png)
+
+![Unitree G1 Humanoid](docs/public/robot_unitree_g1.png)
 
 ---
 

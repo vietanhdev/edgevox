@@ -46,8 +46,12 @@ features:
     <p style="text-align: center; margin-top: 0.5rem; color: var(--vp-c-text-2);"><strong>Voice Pipeline TUI</strong> — streaming STT + LLM + TTS</p>
   </div>
   <div style="flex: 1; min-width: 300px;">
-    <img src="/robot_mujoco.png" alt="MuJoCo Franka Panda pick-and-place demo" style="width: 100%; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);" />
+    <img src="/robot_panda.png" alt="MuJoCo Franka Panda pick-and-place demo" style="width: 100%; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);" />
     <p style="text-align: center; margin-top: 0.5rem; color: var(--vp-c-text-2);"><strong>MuJoCo 3D Demo</strong> — voice-controlled Franka Panda</p>
+  </div>
+  <div style="flex: 1; min-width: 300px;">
+    <img src="/robot_unitree_g1.png" alt="Unitree G1 humanoid demo" style="width: 100%; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);" />
+    <p style="text-align: center; margin-top: 0.5rem; color: var(--vp-c-text-2);"><strong>Unitree G1 Humanoid</strong> — voice-controlled procedural gait</p>
   </div>
 </div>
 
