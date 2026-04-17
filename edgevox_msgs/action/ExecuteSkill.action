@@ -1,0 +1,21 @@
+# Goal — what skill to run and how.
+# ``skill_name`` picks a skill registered on the agent
+# (e.g. ``navigate_to``, ``grasp``, ``move_to``).
+# ``arguments_json`` is a JSON object string mapping kw -> value. Using
+# a JSON string rather than a native ROS IDL field keeps the action
+# generic: every skill the agent exposes maps onto this one action
+# without needing its own message type.
+string skill_name
+string arguments_json
+---
+# Result — terminal outcome.
+# ``ok`` mirrors ``GoalHandle`` SUCCEEDED; ``result_json`` carries the
+# skill's structured result (room reached, object grasped, …).
+bool ok
+string result_json
+string error
+---
+# Feedback — incremental progress.
+# ``feedback_json`` is the same JSON as published on ``/agent_event``
+# so subscribers can use either transport.
+string feedback_json

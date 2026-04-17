@@ -21,9 +21,9 @@ features:
   - title: Agent Framework
     icon: 🧠
     details: "@tool and @skill decorators, LLMAgent with handoffs, behavior-tree workflows (Sequence, Fallback, Loop, Router), cancellable skills with GoalHandle."
-  - title: 2D + 3D Simulation
+  - title: Full Sim Stack
     icon: 🤖
-    details: "IR-SIM for 2D navigation, MuJoCo for 3D pick-and-place. Same SimEnvironment protocol — swap backends without changing agent code."
+    details: "ToyWorld · IR-SIM (2D) · MuJoCo Franka (arm) · Unitree G1/H1 (humanoid) · External ROS2 (Gazebo, Isaac, real robots). One SimEnvironment protocol across all tiers."
   - title: Sub-second Voice
     icon: ⚡
     details: Streaming STT + LLM + TTS pipeline delivers first audio in ~0.8s. 15 languages, 56 voices, 4 TTS backends.
@@ -35,7 +35,7 @@ features:
     details: "SafetyMonitor preempts before the LLM is consulted. Stop-words halt in-flight skills in ~200ms. The LLM never enters the reactive layer."
   - title: ROS2 Native
     icon: 📡
-    details: Full ROS2 bridge with pub/sub topics, proper QoS, and multi-robot namespace support. Planned RosActionSkill for Nav2/MoveIt2.
+    details: "Full ROS2 surface — voice + robot_state + agent_event topics, TF2 / Nav2 cmd_vel / LaserScan / Image, `execute_skill` ActionServer, std_srvs query services."
 ---
 
 ## Demos
@@ -52,7 +52,11 @@ features:
 </div>
 
 ```bash
-edgevox                                    # voice pipeline TUI
-edgevox-agent robot-panda --text-mode      # MuJoCo pick-and-place
-edgevox-agent robot-irsim --text-mode      # IR-SIM 2D navigation
+edgevox                                       # voice pipeline TUI
+edgevox-agent robot-panda --text-mode         # MuJoCo Franka pick-and-place
+edgevox-agent robot-irsim --text-mode         # IR-SIM 2D navigation
+edgevox-agent robot-humanoid --simple-ui      # Unitree G1 humanoid (auto-fetched)
+edgevox-agent robot-external --text-mode      # drive any external ROS2 sim / robot
 ```
+
+Any of those composes with `--ros2` to publish `/edgevox/robot_state` + `/agent_event`, accept `cmd_vel` / `goal_pose` + `text_input`, and expose the `execute_skill` action.

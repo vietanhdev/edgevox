@@ -32,6 +32,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from edgevox.agents.skills import GoalHandle, GoalStatus
 
 try:
@@ -97,6 +99,13 @@ class IrSimEnvironment:
         # agent is idle so the robot animates continuously. It does NOT
         # render; rendering is main-thread-only (see pump_render).
         self._phys_stop = threading.Event()
+        # Manual-velocity override: when set, ``tick_physics`` bypasses
+        # the behavior-driven ``_env.step()`` and advances the robot
+        # with the given velocity directly. The override auto-expires
+        # after ``_MANUAL_VEL_HOLD_S`` seconds so a dropped cmd_vel
+        # stream doesn't leave the robot running forever.
+        self._manual_vel: Any = None
+        self._manual_vel_deadline = 0.0
         self._phys_thread = threading.Thread(target=self._physics_loop, name="irsim-physics", daemon=True)
         self._phys_thread.start()
 
@@ -120,12 +129,30 @@ class IrSimEnvironment:
                 log.exception("IR-SIM physics tick failed")
             time.sleep(self._tick_interval)
 
+    _MANUAL_VEL_HOLD_S = 0.5
+
     def tick_physics(self) -> None:
         """Advance the sim one physics step and update any active goal.
         Thread-safe; called by the physics loop and tests."""
         with self._lock:
             try:
-                self._env.step()
+                if self._manual_vel is not None and time.monotonic() < self._manual_vel_deadline:
+                    # cmd_vel-driven manual override — advance the robot
+                    # directly with the commanded velocity, bypassing
+                    # behavior. Other world objects aren't stepped, but
+                    # the apartment sim has no moving obstacles so that's
+                    # a non-issue.
+                    self._env.robot.stop_flag = False
+                    self._env.robot.arrive_flag = False
+                    self._env.robot.step(self._manual_vel, sensor_step=True)
+                else:
+                    if self._manual_vel is not None:
+                        # stale cmd_vel — fall back to zero so behavior
+                        # can take over cleanly.
+                        with contextlib.suppress(Exception):
+                            self._env.robot.set_velocity([0.0, 0.0])
+                        self._manual_vel = None
+                    self._env.step()
             except Exception:
                 log.exception("IR-SIM env.step failed")
                 return
@@ -253,6 +280,46 @@ class IrSimEnvironment:
     def room_names(self) -> list[str]:
         with self._lock:
             return sorted(self._waypoints)
+
+    # ----- ROS2 adapter hooks — sensor / velocity surfaces -----
+    # These are optional capability hooks consumed by
+    # :class:`edgevox.integrations.ros2_robot.RobotROS2Adapter`. They
+    # let the ROS2 layer publish ``LaserScan`` / ``PoseStamped`` and
+    # accept ``Twist`` ``cmd_vel`` commands without the sim adapter
+    # itself knowing about ROS2.
+
+    def get_lidar_scan(self) -> dict[str, Any] | None:
+        """Return the current 2D lidar scan in a ROS2-compatible dict
+        (keys: ``angle_min``, ``angle_max``, ``angle_increment``,
+        ``time_increment``, ``scan_time``, ``range_min``, ``range_max``,
+        ``ranges``). Returns ``None`` if the robot has no lidar."""
+        with self._lock:
+            try:
+                return self._env.robot.get_lidar_scan()
+            except Exception:
+                return None
+
+    def apply_velocity(self, linear: float, angular: float) -> None:
+        """Command instantaneous linear (m/s) + angular (rad/s) velocity.
+
+        Cancels any active navigation goal so external ``cmd_vel``
+        callers have exclusive control until they stop sending. The
+        override lasts ``_MANUAL_VEL_HOLD_S`` seconds after the last
+        call — drop the cmd_vel stream and the robot halts, which is
+        the standard ROS2 safety behavior.
+        """
+        with self._lock:
+            if self._active_goal is not None:
+                self._active_goal.cancel()
+                self._active_goal = None
+                self._active_target = None
+            self._manual_vel = np.array([[float(linear)], [float(angular)]])
+            self._manual_vel_deadline = time.monotonic() + self._MANUAL_VEL_HOLD_S
+
+    def get_pose2d(self) -> tuple[float, float, float]:
+        """Return ``(x, y, theta_rad)`` pose in the world frame."""
+        with self._lock:
+            return self._robot_pose_unlocked()
 
     def close(self) -> None:
         self._phys_stop.set()

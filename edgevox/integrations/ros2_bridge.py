@@ -20,56 +20,25 @@ try:
     import rclpy
     from rclpy.node import Node
     from rclpy.parameter import Parameter
-    from rclpy.qos import (
-        DurabilityPolicy,
-        HistoryPolicy,
-        QoSProfile,
-        ReliabilityPolicy,
-    )
     from std_msgs.msg import Float32, String
+    from std_srvs.srv import Trigger
 
     ROS2_AVAILABLE = True
 except ImportError:
     ROS2_AVAILABLE = False
 
-# ---------------------------------------------------------------------------
-# QoS profiles tailored to each topic category
-# ---------------------------------------------------------------------------
-# State: late joiners need the latest value immediately
-_QOS_STATE = (
-    QoSProfile(
-        reliability=ReliabilityPolicy.RELIABLE,
-        durability=DurabilityPolicy.TRANSIENT_LOCAL,
-        history=HistoryPolicy.KEEP_LAST,
-        depth=1,
-    )
-    if ROS2_AVAILABLE
-    else None
-)
+# QoS profiles — shared with RobotROS2Adapter and tests via
+# :mod:`edgevox.integrations.ros2_qos`.
+if ROS2_AVAILABLE:
+    from edgevox.integrations.ros2_qos import reliable_qos, sensor_qos, state_qos
 
-# High-frequency sensor-like data (audio level, streaming tokens): drop stale samples
-_QOS_SENSOR = (
-    QoSProfile(
-        reliability=ReliabilityPolicy.BEST_EFFORT,
-        durability=DurabilityPolicy.VOLATILE,
-        history=HistoryPolicy.KEEP_LAST,
-        depth=5,
-    )
-    if ROS2_AVAILABLE
-    else None
-)
-
-# Reliable event/command topics: messages must not be lost
-_QOS_RELIABLE = (
-    QoSProfile(
-        reliability=ReliabilityPolicy.RELIABLE,
-        durability=DurabilityPolicy.VOLATILE,
-        history=HistoryPolicy.KEEP_LAST,
-        depth=10,
-    )
-    if ROS2_AVAILABLE
-    else None
-)
+    _QOS_STATE = state_qos()
+    _QOS_SENSOR = sensor_qos()
+    _QOS_RELIABLE = reliable_qos()
+else:
+    _QOS_STATE = None
+    _QOS_SENSOR = None
+    _QOS_RELIABLE = None
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +63,11 @@ class ROS2Bridge:
     bot_sentence    (std_msgs/String)   completed sentences (TTS chunks)
     wakeword        (std_msgs/String)   wake word detection events
     info            (std_msgs/String)   JSON responses to query commands
+    robot_state     (std_msgs/String)   JSON snapshot of the sim/robot
+                                        world at 10 Hz  [TRANSIENT_LOCAL]
+    agent_event     (std_msgs/String)   JSON stream of agent events
+                                        (tool_call, skill_goal, handoff,
+                                        safety_preempt, etc.)
 
     Subscribers
     -----------
@@ -140,6 +114,11 @@ class ROS2Bridge:
         self._pub_bot_sentence = self._node.create_publisher(String, "bot_sentence", _QOS_RELIABLE)
         self._pub_wakeword = self._node.create_publisher(String, "wakeword", _QOS_RELIABLE)
         self._pub_info = self._node.create_publisher(String, "info", _QOS_RELIABLE)
+        # Sim / robot snapshot is TRANSIENT_LOCAL so late-joining
+        # subscribers (e.g. an rviz panel or logger) get the current
+        # world state immediately without waiting for the next tick.
+        self._pub_robot_state = self._node.create_publisher(String, "robot_state", _QOS_STATE)
+        self._pub_agent_event = self._node.create_publisher(String, "agent_event", _QOS_RELIABLE)
 
         # Callbacks for subscribers (set externally via set_*_callback)
         self._tts_callback: Callable[[str], Any] | None = None
@@ -161,6 +140,25 @@ class ROS2Bridge:
             String, "set_language", self._on_set_language, _QOS_RELIABLE
         )
         self._sub_set_voice = self._node.create_subscription(String, "set_voice", self._on_set_voice, _QOS_RELIABLE)
+
+        # -- Services (query commands, Nav2-style interop) -------------------
+        # Each query is exposed as a std_srvs/srv/Trigger service whose
+        # ``success`` indicates callback success and whose ``message``
+        # carries the JSON reply. This gives ROS2-native clients a
+        # request/reply shape without requiring a custom IDL.
+        self._services: dict[str, Any] = {}
+        for query in ("list_voices", "list_languages", "hardware_info", "model_info"):
+            self._services[query] = self._node.create_service(
+                Trigger,
+                query,
+                lambda req, resp, q=query: self._on_query_service(q, req, resp),
+            )
+
+        # Optional add-ons — opt-in via :meth:`attach_robot_adapter` /
+        # :meth:`attach_skill_action_server`. Stored so
+        # :meth:`shutdown` can clean them up in the right order.
+        self._robot_adapter: Any | None = None
+        self._skill_action_server: Any | None = None
 
         self._spin_thread: threading.Thread | None = None
         self._shutdown_event = threading.Event()
@@ -250,6 +248,26 @@ class ROS2Bridge:
         msg.data = json.dumps(info)
         self._pub_info.publish(msg)
         logger.debug("Published info response")
+
+    def publish_robot_state(self, state: dict) -> None:
+        """Publish a JSON snapshot of the robot/sim world state.
+
+        Uses ``TRANSIENT_LOCAL`` durability so a late-joining subscriber
+        gets the most recent snapshot without having to wait for the
+        next periodic tick.
+        """
+        msg = String()
+        msg.data = json.dumps(state, default=str)
+        self._pub_robot_state.publish(msg)
+
+    def publish_agent_event(self, event: dict) -> None:
+        """Publish an agent event (tool_call, skill_goal, handoff, ...)
+        as JSON. Events are reliable + volatile — late joiners miss
+        replays but every event in-flight is delivered at least once.
+        """
+        msg = String()
+        msg.data = json.dumps(event, default=str)
+        self._pub_agent_event.publish(msg)
 
     # -- callback setters ------------------------------------------------------
 
@@ -345,6 +363,26 @@ class ROS2Bridge:
             except Exception:
                 logger.exception("Error in set_voice callback")
 
+    def _on_query_service(self, query: str, _request: Any, response: Any) -> Any:
+        """Handle a std_srvs/srv/Trigger query — response.message is JSON."""
+        if self._query_callback is None:
+            response.success = False
+            response.message = json.dumps({"error": "query callback not registered"})
+            return response
+        try:
+            result = self._query_callback(query)
+            if result is None:
+                response.success = False
+                response.message = json.dumps({"error": f"no handler for {query}"})
+                return response
+            response.success = True
+            response.message = json.dumps({"query": query, **result})
+        except Exception as e:
+            logger.exception("query service %s failed", query)
+            response.success = False
+            response.message = json.dumps({"error": str(e)})
+        return response
+
     # -- lifecycle -------------------------------------------------------------
 
     def spin(self) -> None:
@@ -366,10 +404,35 @@ class ROS2Bridge:
         self._spin_thread = threading.Thread(target=_spin_worker, daemon=True, name="ros2-spin")
         self._spin_thread.start()
 
+    # ----- add-on plumbing ---------------------------------------------------
+
+    def attach_robot_adapter(self, adapter: Any) -> None:
+        """Register a :class:`RobotROS2Adapter` for coordinated shutdown."""
+        self._robot_adapter = adapter
+
+    def attach_skill_action_server(self, server: Any) -> None:
+        """Register a :class:`SkillActionServer` for coordinated shutdown."""
+        self._skill_action_server = server
+
     def shutdown(self) -> None:
         """Gracefully shut down the node and spin thread."""
         logger.info("Shutting down ROS2 bridge")
         self._shutdown_event.set()
+
+        # Stop add-ons first so their background threads aren't racing
+        # destroyed publishers.
+        if self._robot_adapter is not None:
+            try:
+                self._robot_adapter.shutdown()
+            except Exception:
+                logger.debug("robot adapter shutdown failed", exc_info=True)
+            self._robot_adapter = None
+        if self._skill_action_server is not None:
+            try:
+                self._skill_action_server.shutdown()
+            except Exception:
+                logger.debug("skill action server shutdown failed", exc_info=True)
+            self._skill_action_server = None
 
         if self._spin_thread is not None:
             self._spin_thread.join(timeout=2.0)
@@ -405,6 +468,8 @@ class NullBridge:
     def publish_bot_sentence(self, sentence: str) -> None: ...
     def publish_wakeword(self, wakeword: str) -> None: ...
     def publish_info(self, info: dict) -> None: ...
+    def publish_robot_state(self, state: dict) -> None: ...
+    def publish_agent_event(self, event: dict) -> None: ...
 
     def set_tts_callback(self, callback: Callable[[str], Any]) -> None: ...
     def set_command_callback(self, callback: Callable[[str], Any]) -> None: ...

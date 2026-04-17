@@ -22,6 +22,8 @@ from __future__ import annotations
 import argparse
 import contextlib
 import logging
+import os
+import signal
 import sys
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -182,9 +184,173 @@ class AgentApp:
         parser.add_argument("--voice", default=None, help="TTS voice name override (voice modes only).")
         parser.add_argument("--tts", default=None, help="TTS backend override, e.g. kokoro, piper.")
         parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging.")
+        parser.add_argument(
+            "--ros2",
+            action="store_true",
+            help=(
+                "Attach a ROS2 bridge alongside the selected UI mode. Publishes "
+                "robot_state/agent_event/state/response and accepts text_input "
+                "commands over /edgevox/*. Requires a sourced ROS2 workspace."
+            ),
+        )
+        parser.add_argument(
+            "--ros2-namespace",
+            default="/edgevox",
+            help="ROS2 namespace for the agent's bridge node (default: %(default)s).",
+        )
+        parser.add_argument(
+            "--ros2-state-hz",
+            type=float,
+            default=10.0,
+            help="Rate at which the sim/robot world state is republished (default: %(default)s Hz).",
+        )
         for args, kwargs in self.extra_args:
             parser.add_argument(*args, **kwargs)
         return parser
+
+    # ----- ROS2 bridge helpers --------------------------------------------
+
+    def _start_ros2_bridge(
+        self,
+        args: argparse.Namespace,
+        console: Console,
+    ):
+        """Bring up a :class:`ROS2Bridge` wired into the agent's event
+        stream and the ``SimEnvironment`` world state.
+
+        Returns ``(bridge, stop_event, world_thread, text_input_queue,
+        on_event_wrap)`` — ``stop_event.set()`` + ``world_thread.join()``
+        cleanly shut everything down. ``on_event_wrap`` should be used in
+        place of the caller's own ``on_event`` so agent events reach
+        ROS2 too. ``text_input_queue`` receives strings that arrived on
+        ``/<ns>/text_input`` — the REPL drains it alongside stdin.
+        """
+        import queue
+        import threading as _threading
+
+        from edgevox.integrations.ros2_bridge import NullBridge, create_bridge
+
+        bridge = create_bridge(enabled=True, namespace=args.ros2_namespace)
+        if isinstance(bridge, NullBridge):
+            console.print("[yellow]⚠ --ros2 requested but rclpy was not importable; running without ROS2.[/]")
+            return None, None, None, None, None
+
+        console.print(f"[dim]ROS2 bridge up at [cyan]{args.ros2_namespace}[/] (state @ {args.ros2_state_hz:.1f} Hz)[/]")
+
+        # --- Robot adapter (TF2 / cmd_vel / PoseStamped / LaserScan / Image) ---
+        try:
+            from edgevox.integrations.ros2_robot import create_robot_adapter
+
+            adapter = create_robot_adapter(bridge._node, self.deps)
+            if adapter is not None:
+                bridge.attach_robot_adapter(adapter)
+                caps = []
+                if adapter._has_pose2d:
+                    caps.append("pose2d+TF")
+                if adapter._has_ee_pose:
+                    caps.append("ee_pose+TF")
+                if adapter._has_velocity:
+                    caps.append("cmd_vel")
+                if adapter._has_lidar:
+                    caps.append("scan")
+                if adapter._has_camera:
+                    caps.append("image_raw")
+                console.print(f"[dim]  robot adapter: {', '.join(caps) or 'nothing'}[/]")
+        except Exception:
+            logging.getLogger(__name__).debug("robot adapter init failed", exc_info=True)
+
+        # --- Skill ActionServer (requires edgevox_msgs package) ---------------
+        try:
+            from edgevox.integrations.ros2_actions import (
+                create_skill_action_server,
+                is_available,
+            )
+
+            if is_available() and self.deps is not None:
+
+                def _dispatch(skill_name: str, kwargs: dict[str, Any]) -> Any:
+                    apply = getattr(self.deps, "apply_action", None)
+                    if apply is None:
+                        raise RuntimeError("deps has no apply_action; can't dispatch skill")
+                    return apply(skill_name, **kwargs)
+
+                action_server = create_skill_action_server(bridge._node, _dispatch)
+                if action_server is not None:
+                    bridge.attach_skill_action_server(action_server)
+                    console.print("[dim]  execute_skill action server: up[/]")
+            elif self.deps is not None:
+                console.print(
+                    "[dim]  execute_skill action server: "
+                    "skipped (edgevox_msgs not built — "
+                    "`colcon build --packages-select edgevox_msgs`)[/]"
+                )
+        except Exception:
+            logging.getLogger(__name__).debug("skill action server init failed", exc_info=True)
+
+        stop_event = _threading.Event()
+        text_input_queue: queue.Queue[str] = queue.Queue()
+
+        bridge.set_text_input_callback(lambda t: text_input_queue.put(t))
+
+        def _state_loop() -> None:
+            period = 1.0 / max(0.1, args.ros2_state_hz)
+            while not stop_event.is_set():
+                try:
+                    get_ws = getattr(self.deps, "get_world_state", None)
+                    if callable(get_ws):
+                        bridge.publish_robot_state(get_ws())
+                except Exception:
+                    logging.getLogger(__name__).debug("robot_state publish failed", exc_info=True)
+                stop_event.wait(period)
+
+        world_thread: _threading.Thread | None = None
+        if self.deps is not None:
+            world_thread = _threading.Thread(target=_state_loop, name="ros2-world-state", daemon=True)
+            world_thread.start()
+
+        bridge.publish_state("idle")
+
+        def on_event_wrap(inner: Callable[[AgentEvent], None]):
+            def _wrapped(e: AgentEvent) -> None:
+                try:
+                    payload = getattr(e, "payload", None)
+                    if e.kind == "tool_call" and hasattr(payload, "name"):
+                        bridge.publish_agent_event(
+                            {
+                                "kind": e.kind,
+                                "agent": getattr(e, "agent_name", None),
+                                "tool": payload.name,
+                                "ok": getattr(payload, "ok", None),
+                                "arguments": getattr(payload, "arguments", None),
+                                "result": getattr(payload, "result", None),
+                                "error": getattr(payload, "error", None),
+                            }
+                        )
+                    else:
+                        bridge.publish_agent_event(
+                            {
+                                "kind": e.kind,
+                                "agent": getattr(e, "agent_name", None),
+                                "payload": payload,
+                            }
+                        )
+                except Exception:
+                    logging.getLogger(__name__).debug("agent_event publish failed", exc_info=True)
+                inner(e)
+
+            return _wrapped
+
+        return bridge, stop_event, world_thread, text_input_queue, on_event_wrap
+
+    def _stop_ros2_bridge(self, bridge, stop_event, world_thread) -> None:
+        if stop_event is not None:
+            stop_event.set()
+        if world_thread is not None:
+            world_thread.join(timeout=2.0)
+        if bridge is not None:
+            with contextlib.suppress(Exception):
+                bridge.publish_state("shutting_down")
+            bridge.shutdown()
 
     # ----- mode launchers -----
 
@@ -236,6 +402,7 @@ class AgentApp:
         # Agent-driven text REPL. Runs LLMAgent.run() directly so the
         # same code path is exercised whether the app is a single
         # LLMAgent, a Router, a Sequence, or any nested workflow.
+        import queue as _queue
         import threading
 
         from edgevox.examples.agents._repl import _load_llm_with_progress
@@ -271,6 +438,34 @@ class AgentApp:
             elif e.kind == "safety_preempt":
                 console.print(f"[bold red]⚠ safety preempt: {e.payload}[/]")
 
+        # Wire up ROS2 if requested. The bridge runs alongside stdin:
+        # every AgentEvent is republished on /agent_event, the sim
+        # world state is refreshed on /robot_state at a fixed Hz, and
+        # inbound /text_input messages are processed as if typed.
+        bridge = None
+        ros2_stop = None
+        ros2_thread = None
+        ros2_queue: _queue.Queue[str] | None = None
+        if getattr(args, "ros2", False):
+            bridge, ros2_stop, ros2_thread, ros2_queue, on_event_wrap = self._start_ros2_bridge(args, console)
+            if bridge is not None and on_event_wrap is not None:
+                on_event = on_event_wrap(on_event)
+
+        def _publish_state(s: str) -> None:
+            if bridge is not None:
+                with contextlib.suppress(Exception):
+                    bridge.publish_state(s)
+
+        def _publish_transcription(t: str) -> None:
+            if bridge is not None:
+                with contextlib.suppress(Exception):
+                    bridge.publish_transcription(t)
+
+        def _publish_response(t: str) -> None:
+            if bridge is not None:
+                with contextlib.suppress(Exception):
+                    bridge.publish_response(t)
+
         registered_tools: list[str] = []
         if isinstance(self.agent, LLMAgent):
             registered_tools = [t.name for t in self.agent.tools]
@@ -278,33 +473,32 @@ class AgentApp:
 
         if self.greeting:
             console.print(f"[bold green]{self.agent.name}:[/] {self.greeting}")
+            _publish_response(self.greeting)
 
         stop_words = {w.lower() for w in (self.stop_words or ("stop", "halt", "freeze", "abort", "emergency"))}
 
         pump = getattr(self.deps, "pump_events", None)
         session = Session()
-        while True:
-            try:
-                console.print("[bold]you:[/] ", end="")
-                user = self._input_with_pump("", pump).strip()
-            except (EOFError, KeyboardInterrupt):
-                console.print()
-                return
-            if not user:
-                continue
-            if user.lower() in {"quit", "exit", "bye"}:
-                return
 
-            # Hard-coded stop-word preempt BEFORE the LLM sees the text.
+        # Agent dispatch is single-threaded: stdin turns and ROS2 turns
+        # serialise on this lock so we don't run two ``agent.run`` calls
+        # against the same LLM at the same time.
+        dispatch_lock = threading.Lock()
+
+        def _dispatch(user: str, source: str) -> None:
+            nonlocal stop_event
             tokens = {t.strip(".,!?").lower() for t in user.split()}
             if tokens & stop_words:
                 stop_event.set()
                 console.print(f"[bold red]⚠ safety preempt: stop-word in {user!r}[/]")
                 console.print(f"[bold green]{self.agent.name}:[/] Stopped.")
-                # Reset for next turn
+                _publish_state("interrupted")
+                _publish_response("Stopped.")
                 stop_event = threading.Event()
-                continue
+                return
 
+            _publish_transcription(user)
+            _publish_state("thinking")
             ctx = AgentContext(
                 session=session,
                 deps=self.deps,
@@ -312,9 +506,48 @@ class AgentApp:
                 stop=stop_event,
             )
             result = self.agent.run(user, ctx)
-            console.print(f"[bold green]{self.agent.name}:[/] {result.reply}")
+            console.print(f"[bold green]{self.agent.name} ({source}):[/] {result.reply}")
+            _publish_response(result.reply)
+            _publish_state("listening")
             if result.preempted:
                 stop_event = threading.Event()
+
+        ros2_worker: threading.Thread | None = None
+        if ros2_queue is not None and ros2_stop is not None:
+
+            def _ros2_worker() -> None:
+                while not ros2_stop.is_set():
+                    try:
+                        user = ros2_queue.get(timeout=0.25)
+                    except _queue.Empty:
+                        continue
+                    if not user:
+                        continue
+                    with dispatch_lock:
+                        _dispatch(user, "ros2")
+
+            ros2_worker = threading.Thread(target=_ros2_worker, name="ros2-text-input-worker", daemon=True)
+            ros2_worker.start()
+
+        try:
+            _publish_state("listening")
+            while True:
+                try:
+                    console.print("[bold]you:[/] ", end="")
+                    user = self._input_with_pump("", pump).strip()
+                except (EOFError, KeyboardInterrupt):
+                    console.print()
+                    return
+                if not user:
+                    continue
+                if user.lower() in {"quit", "exit", "bye"}:
+                    return
+                with dispatch_lock:
+                    _dispatch(user, "stdin")
+        finally:
+            self._stop_ros2_bridge(bridge, ros2_stop, ros2_thread)
+            if ros2_worker is not None:
+                ros2_worker.join(timeout=1.0)
 
     def _needs_agent_path(self) -> bool:
         """Return True when this app cannot use the legacy voice pipeline
@@ -411,6 +644,38 @@ class AgentApp:
         )
         console = Console()
 
+        # Centralised Ctrl+C handler: one SIGINT cleans up sim deps
+        # (closes viewer, stops physics thread, releases GL), ROS2
+        # bridge, and any policy thread; a second SIGINT hard-exits.
+        # This matters most for the MuJoCo viewer — if the process
+        # dies without closing the viewer the GLFW window lingers.
+        # ``signal.signal`` only works from the main thread; tests and
+        # other callers that invoke ``AgentApp.run`` from a worker
+        # thread just skip the handler silently.
+        _sigint_count = {"n": 0}
+
+        def _hard_shutdown(_sig: int, _frame: object) -> None:
+            _sigint_count["n"] += 1
+            if _sigint_count["n"] >= 2:
+                console.print("[red]force exit.[/]")
+                os._exit(130)
+            console.print("\n[yellow]stopping... (press Ctrl+C again to force-exit)[/]")
+            try:
+                close = getattr(self.deps, "close", None)
+                if callable(close):
+                    close()
+            except Exception:
+                pass
+            sys.exit(130)
+
+        import threading as _threading_mod
+
+        if _threading_mod.current_thread() is _threading_mod.main_thread():
+            with contextlib.suppress(ValueError):
+                signal.signal(signal.SIGINT, _hard_shutdown)
+            with contextlib.suppress(Exception):
+                signal.signal(signal.SIGTERM, _hard_shutdown)
+
         if self.pre_run is not None:
             self.pre_run(args)
 
@@ -424,3 +689,8 @@ class AgentApp:
         except KeyboardInterrupt:
             console.print("\n[dim]interrupted.[/]")
             sys.exit(130)
+        finally:
+            with contextlib.suppress(Exception):
+                close = getattr(self.deps, "close", None)
+                if callable(close):
+                    close()

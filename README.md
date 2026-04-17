@@ -44,6 +44,24 @@ edgevox-agent robot-panda --text-mode
 
 A MuJoCo viewer opens with a Franka Panda arm above a table with three colored cubes. Type "pick up the red cube" — the arm moves, grasps, and lifts. Voice commands control `move_to`, `grasp`, `release`, and `goto_home` skills.
 
+**3D — MuJoCo humanoid (Unitree G1 / H1)**
+
+```bash
+pip install 'edgevox[sim-mujoco]'
+edgevox-agent robot-humanoid --simple-ui
+```
+
+A Unitree humanoid (auto-fetched from `nrl-ai/edgevox-models` on first use, ~15 MB) appears in the MuJoCo viewer standing on its home keyframe. Say "walk forward half a meter", "turn left ninety degrees", "stand" — a procedural gait swings the legs + arms while the root advances. Plug in an ONNX walking policy via `MujocoHumanoidEnvironment.set_walking_policy(...)` for real RL locomotion.
+
+**Real robot or external sim via ROS2**
+
+```bash
+source /opt/ros/jazzy/setup.bash
+edgevox-agent robot-external --text-mode
+```
+
+Subscribes to `odom`, optionally `scan` + `camera/image_raw`, and publishes `cmd_vel` + `goal_pose`. Drives any Gazebo Harmonic world, Isaac Sim (via ROS2 bridge), or a real mobile robot that speaks the standard contract — the same agent code works unchanged.
+
 ## Features
 
 ### Agent framework
@@ -57,7 +75,7 @@ A MuJoCo viewer opens with a Franka Panda arm above a table with three colored c
 - **`EventBus`** — thread-safe pub/sub for observability, metrics, main-thread scheduling
 - **`SimEnvironment` protocol** — agent code swaps cleanly between `ToyWorld` (stdlib), `IrSimEnvironment` (IR-SIM), and `MujocoArmEnvironment` (MuJoCo)
 - **Parallel tool/skill dispatch** inside a single turn via `ThreadPoolExecutor`
-- **6 built-in example agents** — `home`, `robot`, `dev`, `robot-scout`, `robot-irsim`, `robot-panda`
+- **8 built-in example agents** — `home`, `robot`, `dev`, `robot-scout`, `robot-irsim`, `robot-panda`, `robot-humanoid`, `robot-external`
 
 ### Voice pipeline (substrate)
 
@@ -66,7 +84,7 @@ A MuJoCo viewer opens with a Franka Panda arm above a table with three colored c
 - **Voice interrupt** — speak over the bot to cut it off
 - **4 wake words** — "Hey Jarvis", "Alexa", "Hey Mycroft", "Okay Nabu"
 - **4 interfaces** — TUI (Textual), Web UI (FastAPI + Vue), simple CLI, text mode
-- **ROS2 bridge** — pub/sub topics with proper QoS for multi-robot setups
+- **ROS2-native** — voice-pipeline bridge, TF2 / Nav2 / sensor adapter, `edgevox_msgs/action/ExecuteSkill` action server, external-sim driver for Gazebo / Isaac / real hardware
 - **Auto hardware detection** — CUDA / Metal / CPU fallback, VRAM-aware GPU-layer selection
 
 ## Quick Start
@@ -150,8 +168,10 @@ The five built-in agents are subcommands of `edgevox-agent`:
 | `edgevox-agent robot-scout` | Full agent demo on `ToyWorld` (stdlib, no extra deps) |
 | `edgevox-agent robot-irsim` | Full agent demo on IR-SIM with matplotlib window |
 | `edgevox-agent robot-panda` | MuJoCo Franka Panda — voice pick-and-place |
+| `edgevox-agent robot-humanoid` | MuJoCo Unitree G1 / H1 — voice walk / turn / stand |
+| `edgevox-agent robot-external` | Drive any external ROS2 robot (Gazebo, Isaac, real hardware) |
 
-Each one supports `--text-mode`, `--simple-ui`, or (default) full TUI.
+Each one supports `--text-mode`, `--simple-ui`, or (default) full TUI. Any of them composes with `--ros2` to attach the full ROS2 bridge + Nav2 / TF2 / sensor adapter + `execute_skill` action server.
 
 ## Simulation tiers
 
@@ -159,10 +179,11 @@ Each one supports `--text-mode`, `--simple-ui`, or (default) full TUI.
 |---|---|---|---|---|
 | 0 | `ToyWorld` | stdlib only | unit tests, trivial examples | shipped |
 | 1 | `IrSimEnvironment` | `pip install ir-sim` | 2D visual demo (matplotlib, diff-drive, LiDAR) | shipped |
-| 2 | `MujocoArmEnvironment` | `pip install mujoco` | 3D physics, Franka Panda pick-and-place | shipped |
-| 3 | Gazebo Harmonic | ROS2 + Ubuntu | sim-to-real graduation path | planned |
+| 2a | `MujocoArmEnvironment` | `pip install mujoco` | 3D physics, Franka Panda pick-and-place | shipped |
+| 2b | `MujocoHumanoidEnvironment` | `pip install mujoco` | Unitree G1 / H1, procedural gait, ONNX policy slot | shipped |
+| 3 | `ExternalROS2Environment` | sourced ROS2 workspace | Gazebo Harmonic, Isaac Sim (ROS2 bridge), real robots | shipped |
 
-All tiers implement the same `SimEnvironment` protocol — agent code doesn't change when you swap backends. The `robot-irsim` demo is the Tier 1 experience; `robot-panda` is Tier 2.
+All tiers implement the same `SimEnvironment` protocol — agent code doesn't change when you swap backends. `robot-irsim` is Tier 1; `robot-panda` is Tier 2a; `robot-humanoid` is Tier 2b; `robot-external` is Tier 3 and can point at any Gazebo world or real robot that publishes `nav_msgs/Odometry` and accepts `geometry_msgs/Twist`.
 
 ## Voice pipeline
 
@@ -201,17 +222,24 @@ Full TUI + slash-command reference: [`docs/guide/commands.md`](docs/guide/comman
 
 ## ROS2 integration
 
-EdgeVox publishes voice pipeline events and accepts voice commands over ROS2 topics with proper QoS. Topics live under a configurable namespace (default `/edgevox`).
+EdgeVox ships a full ROS2 surface, opt-in with `--ros2` on any agent or the voice pipeline. Topics live under a configurable namespace (default `/edgevox`).
 
 ```bash
 source /opt/ros/jazzy/setup.bash
-edgevox --ros2
-edgevox --ros2 --ros2-namespace /robot1/voice
+edgevox --ros2                                      # voice pipeline
+edgevox-agent robot-humanoid --simple-ui --ros2     # G1 + voice + ROS2
+edgevox-agent robot-external --text-mode            # drive an external ROS2 robot
 ```
 
-The bridge exposes **9 published topics** (`transcription`, `response`, `state`, `metrics`, `bot_token`, …) and **6 subscribed topics** (`tts_request`, `interrupt`, `set_language`, …) plus **3 parameters** (`language`, `voice`, `muted`). Full reference: [`docs/reference/config.md`](docs/reference/config.md).
+**Published**: `transcription`, `response`, `state` (transient-local), `audio_level`, `metrics`, `bot_token`, `bot_sentence`, `wakeword`, `info`, `robot_state` (sim snapshot), `agent_event` (JSON stream of tool calls / skill goals / handoffs / safety preempts). With a sim attached, `RobotROS2Adapter` adds `/tf`, `pose`, `scan` (IR-SIM lidar), `image_raw` (MuJoCo camera).
 
-**Planned (v2): `RosActionSkill`** — wraps an `rclpy.action.ActionClient` as an EdgeVox skill so voice commands drive real robot action servers (Nav2, MoveIt2, Spot SDK, Unitree) with full goal / feedback / cancel semantics. The existing `SimEnvironment` protocol means your agent code won't change when you graduate from IR-SIM to a real robot — just swap the `deps`.
+**Subscribed**: `tts_request`, `command`, `text_input`, `interrupt`, `set_language`, `set_voice`, `cmd_vel` (Nav2 Twist), `goal_pose` (Nav2 PoseStamped).
+
+**Services**: `list_voices`, `list_languages`, `hardware_info`, `model_info` — each an `std_srvs/srv/Trigger` returning JSON.
+
+**Actions**: `execute_skill` (`edgevox_msgs/action/ExecuteSkill`) — generic `skill_name` + `arguments_json` goal so any agent skill is callable by a stock `rclpy.action.ActionClient`. Build the companion interface package with `colcon build --packages-select edgevox_msgs`.
+
+Launch files under `launch/`: `edgevox.launch.py`, `edgevox_irsim.launch.py`, `edgevox_panda.launch.py`. Full reference: [`docs/guide/ros2.md`](docs/guide/ros2.md).
 
 ## Architecture
 
@@ -230,7 +258,7 @@ Motor control · watchdogs · SafetyMonitor
 *(bypasses LLM)*`"]
     VP["`**Voice pipeline** — the substrate
 Mic → VAD → STT → AgentProcessor → SentenceSplit → TTS → Spk`"]
-    OUT["`ROS2 bridge · IR-SIM (Tier 1) · MuJoCo (Tier 2a, v1.1) · Gazebo (v2)`"]
+    OUT["`ROS2 bridge · IR-SIM (Tier 1) · MuJoCo arm (Tier 2a) · Unitree G1/H1 (Tier 2b) · External ROS2 / Gazebo (Tier 3)`"]
     D --> E --> R
     R --> VP
     VP --> D
@@ -272,7 +300,7 @@ Full architecture writeup: [`docs/plan.md`](docs/plan.md) — grounded in cross-
 - **[Quick start](docs/guide/quickstart.md)**
 - **[TUI commands](docs/guide/commands.md)**
 - **[CLI reference](docs/reference/cli.md)**
-- **[ROS2 bridge reference](docs/reference/config.md)**
+- **[ROS2 guide](docs/guide/ros2.md)** — bridge topics, services, `execute_skill` action, TF2 / Nav2 / sensor interop, launch files
 
 Full site: [EdgeVox Docs](https://edgevox-ai.github.io/edgevox/) (VitePress). Run locally:
 

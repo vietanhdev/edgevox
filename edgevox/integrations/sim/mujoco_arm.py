@@ -219,14 +219,28 @@ class MujocoArmEnvironment:
         self._phys_thread = threading.Thread(target=self._physics_loop, name="mujoco-physics", daemon=True)
         self._phys_thread.start()
 
+        # ``launch_passive`` can segfault at the C level on broken Linux
+        # GL stacks (Wayland+NVIDIA, WSLg, remote X). A subprocess probe
+        # tests GLFW context creation first so a crash in the probe
+        # doesn't take down the main process.
         self._viewer: Any | None = None
         if render:
-            try:
-                self._viewer = mujoco.viewer.launch_passive(self._model, self._data)
-            except Exception:
-                log.exception("mujoco.viewer.launch_passive failed; continuing headless")
-                self._viewer = None
+            from edgevox.integrations.sim._viewer_probe import viewer_available
+
+            ok, reason = viewer_available()
+            if not ok:
+                log.warning(
+                    "MuJoCo viewer unavailable (%s) — continuing headless. Pass --no-render to silence this warning.",
+                    reason,
+                )
                 self._render = False
+            else:
+                try:
+                    self._viewer = mujoco.viewer.launch_passive(self._model, self._data)
+                except Exception:
+                    log.exception("mujoco.viewer.launch_passive failed; continuing headless")
+                    self._viewer = None
+                    self._render = False
 
     # ----- robot-kind init -----
 
@@ -412,6 +426,56 @@ class MujocoArmEnvironment:
             with contextlib.suppress(Exception):
                 self._viewer.close()
             self._viewer = None
+        if getattr(self, "_offscreen_renderer", None) is not None:
+            with contextlib.suppress(Exception):
+                self._offscreen_renderer.close()
+            self._offscreen_renderer = None
+
+    # ----- ROS2 adapter hooks — offscreen camera + pose interop -----
+    # Consumed by :class:`RobotROS2Adapter` to publish
+    # ``sensor_msgs/Image`` and accept ``PoseStamped`` goals.
+
+    def get_ee_pose(self) -> tuple[float, float, float]:
+        """Return end-effector ``(x, y, z)`` in the world frame."""
+        with self._lock:
+            ee = self._compute_ee_unlocked()
+            return float(ee[0]), float(ee[1]), float(ee[2])
+
+    def get_camera_frame(self, width: int = 320, height: int = 240, camera_id: int = -1) -> np.ndarray | None:
+        """Offscreen-render the scene and return an ``HxWx3`` uint8
+        array in ``rgb8`` encoding. Returns ``None`` if OpenGL context
+        creation fails (typical on headless hosts without
+        ``MUJOCO_GL=egl`` / ``osmesa``).
+
+        The renderer is lazily created once per instance and resized
+        on demand — creating a new Renderer per frame churns GL state.
+        """
+        with self._lock:
+            renderer = getattr(self, "_offscreen_renderer", None)
+            cur_size = getattr(self, "_offscreen_size", None)
+            if renderer is None or cur_size != (width, height):
+                try:
+                    if renderer is not None:
+                        with contextlib.suppress(Exception):
+                            renderer.close()
+                    renderer = mujoco.Renderer(self._model, width=width, height=height)
+                    self._offscreen_renderer = renderer
+                    self._offscreen_size = (width, height)
+                except Exception:
+                    log.debug(
+                        "MuJoCo offscreen renderer init failed (set MUJOCO_GL=egl for headless GPU)",
+                        exc_info=True,
+                    )
+                    self._offscreen_renderer = None
+                    self._offscreen_size = None
+                    return None
+            try:
+                renderer.update_scene(self._data, camera=camera_id)
+                pixels = renderer.render()
+                return np.ascontiguousarray(pixels)
+            except Exception:
+                log.debug("MuJoCo offscreen render failed", exc_info=True)
+                return None
 
     # ----- ee computation -----
 

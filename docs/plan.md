@@ -57,8 +57,8 @@ Research revealed a sharp split between "hobbyist first-run" sim needs and "grad
 | **Tier 0** | Built-in headless toy world | Unit tests + trivial examples (`House`, `RobotState`) | None (pure Python stdlib) | shipped |
 | **Tier 1** | **IR-SIM** (hanruihua/ir-sim) | Day-one "pip install → matplotlib window → voice agent drives a 2D robot" | `pip install ir-sim` (one line, MIT, pure Python, active in April 2026) | shipped |
 | **Tier 2** | **MuJoCo — tabletop arm** | 3D pick-and-place demo + mid-motion interrupts | `pip install 'edgevox[sim-mujoco]'` (Franka Panda, auto-fetched from HuggingFace) | shipped |
-| **Tier 2b** | **MuJoCo — humanoid locomotion** | Pre-exported ONNX walking policy + voice commands | Same MuJoCo dep, adds an ONNX policy | planned |
-| **Tier 3** | Gazebo Harmonic / Isaac Sim | Sim-to-real graduation path | Heavy — ROS2 / RTX | planned (v2) |
+| **Tier 2b** | **MuJoCo — humanoid locomotion** (Unitree G1 / H1) | Procedural gait on Menagerie meshes + pluggable ONNX walking policy | Same MuJoCo dep; model auto-fetched from `nrl-ai/edgevox-models` | **shipped** |
+| **Tier 3** | **ExternalROS2Environment** — drive any external ROS2 sim or real robot | Subscribes `odom`/`scan`/`camera/image_raw`, publishes `cmd_vel`/`goal_pose` | Sourced ROS2 workspace (Gazebo, Isaac Sim via ROS2 bridge, real hardware) | **shipped** |
 
 **Why IR-SIM is the right Tier 1 pick:**
 
@@ -450,16 +450,17 @@ flowchart LR
         A3 --> A4["`edgevox-agent robot-panda
 voice pick-and-stack`"]
     end
-    subgraph P2["Phase 2 — Humanoid locomotion (planned)"]
-        B1[Reuses MujocoArmEnvironment base] --> B2[Pre-exported ONNX walking policy]
-        B2 --> B3[walk_forward · turn · stop]
+    subgraph P2["Phase 2 — Humanoid locomotion (shipped)"]
+        B1[MujocoHumanoidEnvironment<br/>Unitree G1 / H1 from Menagerie] --> B2[Procedural walking gait<br/>on {side}_hip_pitch / knee / ankle actuators]
+        B2 --> B3[walk_forward · turn_left · turn_right · stand]
         B3 --> B4["edgevox-agent robot-humanoid"]
+        B2 --> B5[set_walking_policy&#40;&#41; plug-in for ONNX RL policies]
     end
-    P1 -. shared adapter .-> P2
+    P1 -. shared threading / safety / goal model .-> P2
     classDef p1 fill:#e6f4ea,stroke:#34a853,color:#0d652d
-    classDef p2 fill:#fef7e0,stroke:#f9ab00,color:#7a4f01
+    classDef p2 fill:#e6f4ea,stroke:#34a853,color:#0d652d
     class A1,A2,A3,A4 p1
-    class B1,B2,B3,B4 p2
+    class B1,B2,B3,B4,B5 p2
 ```
 
 ### Phase 1 — tabletop manipulation (shipped)
@@ -480,20 +481,21 @@ voice pick-and-stack`"]
 - No VLA / vision input. Object poses come directly from `mjData.xpos`.
 - No dexterous in-hand manipulation, no force feedback, no tactile sensing.
 
-### Phase 2 — humanoid locomotion (planned)
+### Phase 2 — humanoid locomotion (shipped)
 
-Lands *after* Phase 1 is merged and stable. Reuses the `MujocoArmEnvironment` base (rename to `MujocoEnvironment` if the arm assumptions leak) so the threading, rendering, cancellation, and safety plumbing stay identical.
+New file `edgevox/integrations/sim/mujoco_humanoid.py` — `MujocoHumanoidEnvironment(SimEnvironment)`. Reuses the arm adapter's threading / rendering / cancellation model unchanged.
 
-- Loads a **pre-exported ONNX locomotion policy** (e.g. Unitree G1 walking). No in-repo RL training, no JAX/MJX dependency.
-- Skills are deliberately minimal: `walk_forward(distance)`, `turn(angle_deg)`, `stop`. No loco-manipulation.
-- **New example**: `edgevox/examples/agents/robot_humanoid.py`, registered as `edgevox-agent robot-humanoid`.
-- Cap scope to flat-ground walking. Stairs, terrain, falling recovery, and manipulation are explicitly out of scope.
+- **Models**: Unitree G1 (29-DoF) and H1 — auto-fetched from `nrl-ai/edgevox-models/mujoco_scenes/` on HuggingFace (fast, one-time ~15-17 MB per robot), with a `git sparse-checkout` fallback to upstream `google-deepmind/mujoco_menagerie`.
+- **Default pose**: Menagerie's `home` keyframe — the humanoid starts standing balanced, no RL policy required.
+- **Locomotion**: procedural walking gait drives `{side}_hip_pitch` / `{side}_knee` / `{side}_ankle_pitch` and counter-swinging `{side}_shoulder_pitch` / `{side}_elbow` actuators so legs + arms visibly step while the freejoint advances at commanded speed. Joint roles are discovered by substring matching, so the same generator drives any Menagerie humanoid that follows the convention.
+- **ONNX policy slot**: `MujocoHumanoidEnvironment.set_walking_policy(policy)` replaces the procedural gait with a caller-supplied policy matching the `WalkingPolicy` protocol (`reset()` / `step(obs, command) -> action`). No training code in-repo; no JAX/MJX dependency.
+- **Skills** on `edgevox-agent robot-humanoid`: `walk_forward(distance)`, `walk_backward(distance)`, `turn_left(degrees)`, `turn_right(degrees)`, `stand`, `get_pose`. Cancellable mid-motion via `ctx.stop`, same contract as Phase 1.
+- **ROS2 interop** inherited from the `RobotROS2Adapter`: `get_pose2d()` drives the TF2 `map → base_link` broadcast, `get_ee_pose()` publishes the head as the camera frame, `apply_velocity()` consumes `geometry_msgs/Twist` on `cmd_vel`, `get_camera_frame()` publishes `sensor_msgs/Image` from a MuJoCo head camera.
 
-**Why Phase 2 is a stretch, not a requirement:**
+**Honest scope caps:**
 
-- Humanoid balance is sensitive to observation / action normalisation; policy integration can eat a week by itself.
-- The voice-interaction story is almost entirely in Phase 1 (natural-language spatial reasoning, mid-motion interrupt). Phase 2 is eye-candy on top.
-- If Phase 2 slips, ship it as "coming soon" in v1.2 docs and keep Phase 1 as the full MuJoCo story.
+- The procedural gait is a visual/demo controller, not a validated balanced gait. Push-recovery and stairs need a real RL policy plugged in via `set_walking_policy`.
+- Dexterous manipulation, terrain, falling recovery remain out of scope for this tier.
 
 ## Anti-patterns encoded in the design
 
@@ -681,15 +683,16 @@ Suggested landing sequence so each phase is independently mergeable and testable
 7. **Phase 7: ROS2 action adapter stub** — `RosActionSkill` import-guarded helper. Not wired into examples yet; exists for users.
 8. **Phase 8: Docs** — update `docs/guide/agents.md` with the five new sections. Cross-link from the new plan doc.
 9. **Phase 9: MuJoCo tabletop arm (v1.1)** — `MujocoArmEnvironment`, bundled `tabletop_arm.xml`, `robot_panda` example, `edgevox-agent robot-panda` subcommand, `sim-mujoco` optional dep group. Headless integration tests guarded by `pytest.importorskip("mujoco")`.
-10. **Phase 10: MuJoCo humanoid locomotion (v1.2, stretch)** — `robot_humanoid` example + pre-exported ONNX walking policy. Only lands if Phase 9 is stable and the policy integration stays inside one week.
+10. **Phase 10: MuJoCo humanoid locomotion (v1.2)** — `MujocoHumanoidEnvironment` (Unitree G1 / H1 from Menagerie), `robot_humanoid` example, procedural walking gait with an ONNX policy slot via `set_walking_policy`. *Shipped.*
+11. **Phase 11: ROS2 horizontal stack (v1.2)** — voice-pipeline bridge (`ROS2Bridge`), Nav2/TF2/sensor adapter (`RobotROS2Adapter`), ExecuteSkill action server (`ros2_actions.py` + `edgevox_msgs` colcon package), external-ROS2 sim (`ExternalROS2Environment`), `edgevox-agent robot-external` subcommand. *Shipped.*
 
-Phases 1–3 unlock the "agent builder" v1 positioning. Phases 4–7 unlock the "robotics framework" direction. Phase 8 closes the doc loop. Phases 9–10 add the 3D demos.
+Phases 1–3 unlock the "agent builder" v1 positioning. Phases 4–7 unlock the "robotics framework" direction. Phase 8 closes the doc loop. Phases 9–11 add the 3D demos, the humanoid tier, and the full ROS2 surface.
 
 ## Out of scope for v1 (v2 candidates)
 
-- **Gazebo Harmonic adapter** (`edgevox/integrations/sim/gazebo.py`) — the sim-to-real graduation target. Adds when users demand it; the `SimEnvironment` protocol makes this a drop-in.
-- **Isaac Sim adapter** — RTX-mandatory; crosses the day-one install bar.
-- **Real Franka meshes / Menagerie bundling** — the v1.1 Phase 1 scene is self-contained. Users who want the real Franka point `model_path=` at their own `mujoco_menagerie` checkout.
+- **Dedicated Gazebo Harmonic adapter** — the generic `ExternalROS2Environment` already drives any Gazebo world that publishes standard `nav_msgs/Odometry` + accepts `geometry_msgs/Twist`. A Gazebo-specific adapter with model spawn / pause / reset hooks is worthwhile when users demand it.
+- **Isaac Sim native adapter** — Isaac Sim's ROS2 bridge already works with `ExternalROS2Environment` today; an in-process Python binding (no ROS2 hop) is v2.
+- **Pre-trained walking policies bundled with the repo** — users plug their own ONNX via `set_walking_policy`; shipping a policy tied to a specific humanoid + mass model is out of scope until a high-quality open policy stabilises.
 - **Parallel workflow** + multi-LLM instances (requires another GGUF loaded in RAM).
 - **Async `Agent.run_async()`** + `AsyncIterator[AgentEvent]`.
 - **Full BT exporter** (EdgeVox workflow tree → BT.CPP XML) for graduation to production robot planners.

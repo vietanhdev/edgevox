@@ -13,7 +13,7 @@ EdgeVox combines two things:
 1. **An agent framework** — `@tool` and `@skill` decorators, `LLMAgent` with handoffs, behavior-tree workflows (`Sequence`, `Fallback`, `Loop`, `Router`), cancellable skills with `GoalHandle`, and a `SafetyMonitor` that preempts before the LLM is consulted.
 2. **A streaming voice pipeline** — Mic → VAD → STT → LLM → TTS → Speaker, delivering first audio in ~0.8s. The pipeline is the substrate that agents run on top of.
 
-Agent code is sim-agnostic: the same Python works on `ToyWorld` (stdlib), `IrSimEnvironment` (2D navigation), and `MujocoArmEnvironment` (3D pick-and-place).
+Agent code is sim-agnostic: the same Python works on `ToyWorld` (stdlib), `IrSimEnvironment` (2D navigation), `MujocoArmEnvironment` (3D pick-and-place), `MujocoHumanoidEnvironment` (Unitree G1 / H1), and `ExternalROS2Environment` (any Gazebo / Isaac / real robot over ROS2).
 
 ## Key Design Principles
 
@@ -24,12 +24,13 @@ Agent code is sim-agnostic: the same Python works on `ToyWorld` (stdlib), `IrSim
 
 ## Simulation Tiers
 
-| Tier | Sim | Dependencies | Status |
-|------|-----|-------------|--------|
-| 0 | `ToyWorld` | stdlib only | shipped |
-| 1 | `IrSimEnvironment` | `pip install ir-sim` | shipped |
-| 2 | `MujocoArmEnvironment` | `pip install mujoco` | shipped |
-| 3 | Gazebo Harmonic | ROS2 + Ubuntu | planned |
+| Tier | Sim | Dependencies | Role | Status |
+|------|-----|-------------|------|--------|
+| 0 | `ToyWorld` | stdlib only | unit tests, trivial examples | shipped |
+| 1 | `IrSimEnvironment` | `pip install ir-sim` | 2D visual demo (matplotlib, diff-drive, LiDAR) | shipped |
+| 2a | `MujocoArmEnvironment` | `pip install mujoco` | 3D physics, Franka pick-and-place | shipped |
+| 2b | `MujocoHumanoidEnvironment` | `pip install mujoco` | Unitree G1 / H1 from Menagerie, procedural gait + ONNX policy slot | shipped |
+| 3 | `ExternalROS2Environment` | sourced ROS2 workspace | drive Gazebo / Isaac / real robots over standard topics | shipped |
 
 ## Voice Pipeline Components
 
