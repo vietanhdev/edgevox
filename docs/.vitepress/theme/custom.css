@@ -1,204 +1,322 @@
-/* EdgeVox — warm, clean, sophisticated documentation theme */
+/* EdgeVox — editorial robotics theme: warm paper, serif display, ink body */
 
-/* Google Fonts: Inter for body, Source Code Pro for code */
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Code+Pro:wght@400;500;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
 
 :root {
-  /* Warm terracotta palette */
-  --vp-c-brand-1: #c96442;
-  --vp-c-brand-2: #b5563a;
-  --vp-c-brand-3: #a04b32;
-  --vp-c-brand-soft: rgba(201, 100, 66, 0.1);
+  /* Terracotta accent — unchanged, it's the brand */
+  --vp-c-brand-1: #b5563a;
+  --vp-c-brand-2: #a04b32;
+  --vp-c-brand-3: #8a3f2a;
+  --vp-c-brand-soft: rgba(181, 86, 58, 0.1);
 
-  --vp-c-tip-1: #c96442;
-  --vp-c-tip-2: #b5563a;
-  --vp-c-tip-soft: rgba(201, 100, 66, 0.08);
+  --vp-c-tip-1: #b5563a;
+  --vp-c-tip-2: #a04b32;
+  --vp-c-tip-soft: rgba(181, 86, 58, 0.08);
 
-  /* Light backgrounds — warm cream tones */
-  --vp-c-bg: #faf7f2;
-  --vp-c-bg-alt: #f5f0e8;
-  --vp-c-bg-soft: #efe9de;
-  --vp-c-bg-mute: #e8e0d2;
-  --vp-c-bg-elv: #ffffff;
+  /* Paper palette — warmer and slightly deeper than before */
+  --vp-c-bg: #f6efe2;
+  --vp-c-bg-alt: #efe6d3;
+  --vp-c-bg-soft: #e8ddc6;
+  --vp-c-bg-mute: #ddd0b5;
+  --vp-c-bg-elv: #fbf6ec;
 
-  /* Borders — soft warm gray */
-  --vp-c-divider: #e0d6c8;
-  --vp-c-gutter: #e0d6c8;
-  --vp-c-border: #d4c9b9;
+  /* Borders — warm ink-brown */
+  --vp-c-divider: #d9ccb0;
+  --vp-c-gutter: #d9ccb0;
+  --vp-c-border: #c8b997;
 
-  /* Text — deep warm tones */
-  --vp-c-text-1: #1a1613;
-  --vp-c-text-2: #544840;
-  --vp-c-text-3: #8a7e74;
+  /* Text — ink */
+  --vp-c-text-1: #15100c;
+  --vp-c-text-2: #453b31;
+  --vp-c-text-3: #7a6a58;
 
-  /* Code blocks — light warm background */
-  --vp-code-block-bg: #f0ebe3;
-  --vp-code-line-highlight-color: rgba(201, 100, 66, 0.08);
+  --vp-code-block-bg: #ece2ca;
+  --vp-code-line-highlight-color: rgba(181, 86, 58, 0.09);
   --vp-code-tab-divider: var(--vp-c-divider);
-  --vp-code-copy-code-bg: rgba(201, 100, 66, 0.06);
-  --vp-code-copy-code-hover-bg: rgba(201, 100, 66, 0.12);
+  --vp-code-copy-code-bg: rgba(181, 86, 58, 0.06);
+  --vp-code-copy-code-hover-bg: rgba(181, 86, 58, 0.14);
   --vp-code-tab-text-color: var(--vp-c-text-2);
   --vp-code-tab-active-text-color: var(--vp-c-brand-1);
   --vp-code-tab-hover-text-color: var(--vp-c-text-1);
 
-  /* Typography */
+  /* Typography — serif display, sans body, crisp mono */
   --vp-font-family-base: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
     Roboto, "Helvetica Neue", Arial, sans-serif;
-  --vp-font-family-mono: "Source Code Pro", ui-monospace, "SF Mono", Menlo,
+  --vp-font-family-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo,
     Consolas, monospace;
+  --vp-font-family-display: "Fraunces", "Iowan Old Style", "Palatino Linotype",
+    Georgia, serif;
 
-  /* Button */
-  --vp-button-brand-bg: #c96442;
-  --vp-button-brand-hover-bg: #b5563a;
-  --vp-button-brand-active-bg: #a04b32;
-  --vp-button-brand-text: #ffffff;
+  --vp-button-brand-bg: #b5563a;
+  --vp-button-brand-hover-bg: #a04b32;
+  --vp-button-brand-active-bg: #8a3f2a;
+  --vp-button-brand-text: #fbf6ec;
 
-  /* Badge */
-  --vp-badge-tip-bg: rgba(201, 100, 66, 0.1);
-  --vp-badge-tip-text: #c96442;
+  --vp-badge-tip-bg: rgba(181, 86, 58, 0.12);
+  --vp-badge-tip-text: #a04b32;
 }
 
-/* Dark mode */
 .dark {
   --vp-c-brand-1: #e08a6a;
   --vp-c-brand-2: #c96442;
   --vp-c-brand-3: #b5563a;
-  --vp-c-brand-soft: rgba(224, 138, 106, 0.12);
+  --vp-c-brand-soft: rgba(224, 138, 106, 0.14);
 
   --vp-c-tip-1: #e08a6a;
   --vp-c-tip-2: #c96442;
   --vp-c-tip-soft: rgba(224, 138, 106, 0.08);
 
-  --vp-c-bg: #191513;
-  --vp-c-bg-alt: #211c18;
-  --vp-c-bg-soft: #2a231e;
-  --vp-c-bg-mute: #332b24;
-  --vp-c-bg-elv: #2a231e;
+  --vp-c-bg: #17120f;
+  --vp-c-bg-alt: #1f1814;
+  --vp-c-bg-soft: #271f19;
+  --vp-c-bg-mute: #30261e;
+  --vp-c-bg-elv: #211a15;
 
-  --vp-c-divider: #3d332a;
-  --vp-c-gutter: #3d332a;
-  --vp-c-border: #4a3e33;
+  --vp-c-divider: #3b2f25;
+  --vp-c-gutter: #3b2f25;
+  --vp-c-border: #4a3c2f;
 
-  --vp-c-text-1: #f0ebe4;
-  --vp-c-text-2: #b5a99a;
-  --vp-c-text-3: #8a7e74;
+  --vp-c-text-1: #f2ead9;
+  --vp-c-text-2: #bfae95;
+  --vp-c-text-3: #8a7963;
 
-  --vp-code-block-bg: #141110;
-  --vp-code-line-highlight-color: rgba(224, 138, 106, 0.06);
+  --vp-code-block-bg: #120e0b;
+  --vp-code-line-highlight-color: rgba(224, 138, 106, 0.07);
   --vp-code-copy-code-bg: rgba(224, 138, 106, 0.08);
-  --vp-code-copy-code-hover-bg: rgba(224, 138, 106, 0.15);
+  --vp-code-copy-code-hover-bg: rgba(224, 138, 106, 0.16);
 
   --vp-button-brand-bg: #c96442;
   --vp-button-brand-hover-bg: #e08a6a;
   --vp-button-brand-active-bg: #b5563a;
 }
 
-/* ===== GLOBAL ===== */
+/* ===== PAPER GRAIN ===== */
 
 body {
-  font-size: 15px;
-  line-height: 1.7;
-  letter-spacing: -0.01em;
+  font-size: 16px;
+  line-height: 1.72;
+  letter-spacing: -0.005em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "ss01", "cv11";
+  position: relative;
+}
+
+/* Subtle paper grain overlay — SVG noise, pointer-events disabled */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.35;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.08  0 0 0 0 0.06  0 0 0 0 0.04  0 0 0 0.55 0'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='0.5'/></svg>");
+}
+
+.dark body::before {
+  opacity: 0.25;
+  mix-blend-mode: screen;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.9  0 0 0 0 0.78  0 0 0 0 0.6  0 0 0 0.4 0'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='0.5'/></svg>");
+}
+
+/* Keep app content above the grain */
+#app,
+.Layout {
+  position: relative;
+  z-index: 1;
 }
 
 /* ===== HERO ===== */
 
 .VPHero {
   position: relative;
-  padding-bottom: 48px !important;
+  padding-bottom: 64px !important;
+}
+
+/* Editorial meta row above the hero title — attached to .main so it stacks
+   above the name, not as a flex sibling to the left of it */
+.VPHero .main::before {
+  content: "OFFLINE  ·  REAL-TIME  ·  ROS2-NATIVE  ·  MIT";
+  display: block;
+  font-family: var(--vp-font-family-mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--vp-c-brand-1);
+  margin-bottom: 24px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--vp-c-border);
+  max-width: 540px;
+}
+
+/* Stat strip under the actions */
+.VPHero .main::after {
+  content: "15 LANGUAGES   ·   56 VOICES   ·   ~0.8s FIRST AUDIO   ·   CPU / CUDA / METAL";
+  display: block;
+  margin-top: 32px;
+  padding-top: 18px;
+  border-top: 1px solid var(--vp-c-divider);
+  font-family: var(--vp-font-family-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--vp-c-text-3);
+  max-width: 560px;
+}
+
+/* Keep hero text inside its column so it doesn't spill behind the image */
+.VPHero .main {
+  max-width: 100%;
+  overflow-wrap: break-word;
 }
 
 .VPHero .name {
-  font-weight: 700 !important;
-  letter-spacing: -0.03em !important;
+  font-family: var(--vp-font-family-display) !important;
+  font-weight: 600 !important;
+  font-size: clamp(2.8rem, 5.2vw, 4.6rem) !important;
+  line-height: 1.02 !important;
+  letter-spacing: -0.035em !important;
   color: var(--vp-c-text-1) !important;
+  font-variation-settings: "opsz" 144, "SOFT" 30;
   background: none !important;
   -webkit-text-fill-color: unset !important;
 }
 
-/* Brand gradient on the clip text */
 .VPHero .name .clip {
-  background: linear-gradient(135deg, #c96442 0%, #e08a6a 50%, #c96442 100%) !important;
+  background: linear-gradient(
+    180deg,
+    #b5563a 0%,
+    #a04b32 55%,
+    #8a3f2a 100%
+  ) !important;
   -webkit-background-clip: text !important;
   background-clip: text !important;
   -webkit-text-fill-color: transparent !important;
+  font-style: italic;
+  font-variation-settings: "opsz" 144, "SOFT" 100;
 }
 
 .VPHero .text {
-  font-weight: 500 !important;
+  font-family: var(--vp-font-family-display) !important;
+  font-weight: 400 !important;
+  font-style: italic !important;
+  font-size: clamp(1.15rem, 1.6vw, 1.4rem) !important;
+  line-height: 1.3 !important;
   color: var(--vp-c-text-2) !important;
-  letter-spacing: -0.01em !important;
+  letter-spacing: -0.015em !important;
+  margin-top: 8px !important;
+  max-width: 100%;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .VPHero .tagline {
+  font-family: var(--vp-font-family-base) !important;
   color: var(--vp-c-text-3) !important;
-  font-size: 18px !important;
+  font-size: 15.5px !important;
   font-weight: 400 !important;
-  max-width: 520px;
+  line-height: 1.55 !important;
+  max-width: 540px;
+  margin-top: 16px !important;
 }
 
-/* Hero buttons */
 .VPHero .actions .VPButton {
-  border-radius: 8px !important;
-  font-weight: 600 !important;
-  letter-spacing: -0.01em;
+  border-radius: 2px !important;
+  font-family: var(--vp-font-family-mono) !important;
+  font-weight: 500 !important;
+  font-size: 13px !important;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0 22px !important;
+  height: 44px !important;
+  line-height: 44px !important;
   transition: all 0.2s ease;
 }
 
 .VPHero .actions .VPButton.brand {
   background: var(--vp-button-brand-bg) !important;
   border-color: var(--vp-button-brand-bg) !important;
-  color: #fff !important;
+  color: var(--vp-button-brand-text) !important;
 }
 
 .VPHero .actions .VPButton.brand:hover {
   background: var(--vp-button-brand-hover-bg) !important;
   border-color: var(--vp-button-brand-hover-bg) !important;
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(201, 100, 66, 0.25);
+  box-shadow: 0 6px 16px rgba(138, 63, 42, 0.22);
 }
 
 .VPHero .actions .VPButton.alt {
-  border-color: var(--vp-c-border) !important;
+  border-color: var(--vp-c-text-1) !important;
   color: var(--vp-c-text-1) !important;
   background: transparent !important;
 }
 
 .VPHero .actions .VPButton.alt:hover {
-  border-color: var(--vp-c-brand-1) !important;
-  color: var(--vp-c-brand-1) !important;
+  background: var(--vp-c-text-1) !important;
+  color: var(--vp-c-bg) !important;
   transform: translateY(-1px);
 }
 
 /* ===== FEATURE CARDS ===== */
 
+.VPFeatures .container::before {
+  content: "§ Capabilities";
+  display: block;
+  font-family: var(--vp-font-family-mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--vp-c-brand-1);
+  margin: 12px 0 28px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--vp-c-border);
+}
+
 .VPFeature {
-  border: 1px solid var(--vp-c-divider) !important;
-  background: var(--vp-c-bg-elv) !important;
-  border-radius: 12px !important;
+  border: none !important;
+  border-top: 2px solid var(--vp-c-text-1) !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+  padding: 22px 4px 12px !important;
   transition: all 0.25s ease;
 }
 
 .VPFeature:hover {
-  border-color: var(--vp-c-brand-1) !important;
+  border-top-color: var(--vp-c-brand-1) !important;
   transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
-.dark .VPFeature:hover {
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+.VPFeature .box {
+  padding: 0 !important;
+  background: transparent !important;
+}
+
+.VPFeature .icon {
+  background: transparent !important;
+  font-size: 28px !important;
+  margin-bottom: 8px !important;
+  width: auto !important;
+  height: auto !important;
 }
 
 .VPFeature .title {
+  font-family: var(--vp-font-family-display) !important;
   color: var(--vp-c-text-1) !important;
   font-weight: 600 !important;
+  font-size: 1.35rem !important;
+  letter-spacing: -0.02em !important;
+  line-height: 1.25 !important;
+  margin-bottom: 10px !important;
 }
 
 .VPFeature .details {
   color: var(--vp-c-text-2) !important;
-  line-height: 1.6;
+  font-size: 14.5px !important;
+  line-height: 1.65 !important;
 }
 
 /* ===== SIDEBAR ===== */
@@ -208,9 +326,18 @@ body {
   background: var(--vp-c-bg) !important;
 }
 
-.VPSidebarItem .link {
-  font-size: 14px !important;
+.VPSidebarItem.level-0 > .item > .text {
+  font-family: var(--vp-font-family-mono) !important;
+  font-size: 11px !important;
+  letter-spacing: 0.18em !important;
+  text-transform: uppercase !important;
+  color: var(--vp-c-brand-1) !important;
   font-weight: 500 !important;
+}
+
+.VPSidebarItem .link {
+  font-size: 14.5px !important;
+  font-weight: 450 !important;
   transition: color 0.15s ease;
 }
 
@@ -223,78 +350,130 @@ body {
 
 .VPNavBar {
   border-bottom: 1px solid var(--vp-c-divider) !important;
-  background: rgba(250, 247, 242, 0.85) !important;
-  backdrop-filter: blur(12px);
+  background: rgba(246, 239, 226, 0.88) !important;
+  backdrop-filter: blur(14px) saturate(1.05);
 }
 
 .dark .VPNavBar {
-  background: rgba(25, 21, 19, 0.85) !important;
+  background: rgba(23, 18, 15, 0.88) !important;
 }
 
 .VPNavBarTitle .title {
-  font-weight: 700 !important;
+  font-family: var(--vp-font-family-display) !important;
+  font-weight: 600 !important;
+  font-size: 1.25rem !important;
   color: var(--vp-c-text-1) !important;
   letter-spacing: -0.02em;
+}
+
+.VPNavBarMenuLink,
+.VPNavBarMenuGroup .button {
+  font-family: var(--vp-font-family-mono) !important;
+  font-size: 12px !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+  font-weight: 500 !important;
 }
 
 /* ===== CONTENT ===== */
 
 .vp-doc h1 {
-  font-weight: 700;
+  font-family: var(--vp-font-family-display);
+  font-weight: 600;
+  font-size: clamp(2.2rem, 4vw, 3rem);
+  line-height: 1.1;
   letter-spacing: -0.03em;
-  border-bottom: 1px solid var(--vp-c-divider);
-  padding-bottom: 12px;
+  border-bottom: 1px solid var(--vp-c-border);
+  padding-bottom: 20px;
+  margin-bottom: 28px;
+  color: var(--vp-c-text-1);
 }
 
 .vp-doc h2 {
+  font-family: var(--vp-font-family-display);
   font-weight: 600;
+  font-size: 1.75rem;
   letter-spacing: -0.02em;
   border-top: 1px solid var(--vp-c-divider);
-  padding-top: 24px;
-  margin-top: 40px;
+  padding-top: 28px;
+  margin-top: 48px;
+  position: relative;
+}
+
+.vp-doc h2::before {
+  content: "§";
+  color: var(--vp-c-brand-1);
+  font-family: var(--vp-font-family-display);
+  font-weight: 400;
+  margin-right: 0.4em;
+  opacity: 0.7;
 }
 
 .vp-doc h3 {
+  font-family: var(--vp-font-family-display);
   font-weight: 600;
-  letter-spacing: -0.01em;
+  font-size: 1.3rem;
+  letter-spacing: -0.015em;
+}
+
+.vp-doc p {
+  font-size: 16px;
+  line-height: 1.72;
+}
+
+/* Drop cap on the first paragraph after an H1 — subtle editorial touch */
+.vp-doc h1 + p::first-letter {
+  font-family: var(--vp-font-family-display);
+  font-weight: 600;
+  font-size: 3.4em;
+  float: left;
+  line-height: 0.9;
+  padding: 0.08em 0.12em 0 0;
+  color: var(--vp-c-brand-1);
 }
 
 /* Inline code */
 .vp-doc :not(pre) > code {
   background: var(--vp-c-brand-soft) !important;
-  color: var(--vp-c-brand-1) !important;
-  border-radius: 4px;
+  color: var(--vp-c-brand-2) !important;
+  border-radius: 2px;
   padding: 2px 6px;
-  font-size: 0.9em;
+  font-size: 0.88em;
+  font-weight: 500;
 }
 
-/* Code blocks */
+/* Code blocks — stamped, not rounded */
 .vp-doc div[class*="language-"] {
-  border: 1px solid var(--vp-c-divider) !important;
-  border-radius: 8px !important;
+  border: 1px solid var(--vp-c-border) !important;
+  border-radius: 2px !important;
   background: var(--vp-code-block-bg) !important;
+  box-shadow: 2px 2px 0 var(--vp-c-border);
+}
+
+.dark .vp-doc div[class*="language-"] {
+  box-shadow: 2px 2px 0 var(--vp-c-divider);
 }
 
 .vp-doc div[class*="language-"] pre {
   background: transparent !important;
 }
 
-/* Let Shiki handle syntax colors — don't override */
-
-/* Language label in code blocks */
 .vp-doc div[class*="language-"] > span.lang {
   color: var(--vp-c-text-3) !important;
-  font-size: 12px;
+  font-family: var(--vp-font-family-mono) !important;
+  font-size: 11px !important;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
-/* Copy button */
 .vp-doc div[class*="language-"] > button.copy {
-  border-radius: 6px;
+  border-radius: 2px;
 }
 
-/* Tables */
+/* Tables — editorial */
 .vp-doc table {
   border-collapse: collapse;
+  font-size: 14.5px;
 }
 
 .vp-doc tr {
@@ -302,24 +481,55 @@ body {
 }
 
 .vp-doc th {
+  font-family: var(--vp-font-family-mono) !important;
+  font-size: 11px !important;
+  letter-spacing: 0.1em !important;
+  text-transform: uppercase !important;
   font-weight: 600 !important;
   color: var(--vp-c-text-1) !important;
-  background: var(--vp-c-bg-soft) !important;
+  background: transparent !important;
+  border-bottom: 2px solid var(--vp-c-text-1) !important;
+  padding: 12px 16px !important;
 }
 
-/* Links */
+.vp-doc td {
+  padding: 12px 16px !important;
+}
+
+/* Links — no underline line clutter, just a colored run */
 .vp-doc a {
   color: var(--vp-c-brand-1) !important;
   text-decoration: none !important;
-  border-bottom: 1px solid rgba(201, 100, 66, 0.3);
-  transition: border-color 0.15s ease;
+  border-bottom: 1px solid var(--vp-c-brand-soft);
+  transition: border-color 0.15s ease, background 0.15s ease;
+  padding-bottom: 1px;
 }
 
 .vp-doc a:hover {
   border-bottom-color: var(--vp-c-brand-1) !important;
+  background: var(--vp-c-brand-soft);
 }
 
-/* Tip/Info/Warning custom blocks */
+/* Pull-quote style for blockquotes */
+.vp-doc blockquote {
+  border-left: 2px solid var(--vp-c-brand-1) !important;
+  padding: 4px 0 4px 22px !important;
+  font-family: var(--vp-font-family-display);
+  font-style: italic;
+  font-size: 1.15em;
+  line-height: 1.55;
+  color: var(--vp-c-text-1) !important;
+  background: transparent !important;
+  margin: 28px 0 !important;
+}
+
+/* Custom blocks — keep functional but flatter */
+.vp-doc .custom-block {
+  border-radius: 2px !important;
+  border-width: 1px !important;
+  border-left-width: 3px !important;
+}
+
 .vp-doc .custom-block.tip {
   border-color: var(--vp-c-brand-1) !important;
   background: var(--vp-c-brand-soft) !important;
@@ -331,59 +541,88 @@ body {
 }
 
 .vp-doc .custom-block.warning {
-  border-color: #d4900d !important;
-  background: rgba(212, 144, 13, 0.06) !important;
+  border-color: #b17a1a !important;
+  background: rgba(177, 122, 26, 0.08) !important;
+}
+
+.vp-doc .custom-block-title {
+  font-family: var(--vp-font-family-mono) !important;
+  font-size: 11px !important;
+  letter-spacing: 0.15em !important;
+  text-transform: uppercase !important;
+  font-weight: 600 !important;
 }
 
 /* ===== FOOTER ===== */
 
 .VPFooter {
   border-top: 1px solid var(--vp-c-divider) !important;
+  background: transparent !important;
+}
+
+.VPFooter .message,
+.VPFooter .copyright {
+  font-family: var(--vp-font-family-mono) !important;
+  font-size: 11px !important;
+  letter-spacing: 0.1em !important;
+  text-transform: uppercase !important;
+  color: var(--vp-c-text-3) !important;
 }
 
 /* ===== SEARCH ===== */
 
 .DocSearch-Button {
-  border-radius: 8px !important;
+  border-radius: 2px !important;
+  border: 1px solid var(--vp-c-border) !important;
+  background: transparent !important;
 }
 
 /* ===== HERO IMAGE ===== */
 
-/* Make the hero screenshot prominent */
 .VPHero .image-container {
-  max-width: 520px !important;
+  max-width: 420px !important;
+}
+
+.VPHero .image {
+  align-self: center !important;
 }
 
 .VPHero .image-container img {
-  border-radius: 12px !important;
-  border: 1px solid var(--vp-c-divider) !important;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12) !important;
+  border-radius: 2px !important;
+  border: 1px solid var(--vp-c-border) !important;
+  box-shadow: 6px 6px 0 var(--vp-c-border), 0 18px 48px rgba(20, 12, 6, 0.12) !important;
 }
 
 .dark .VPHero .image-container img {
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4) !important;
+  box-shadow: 6px 6px 0 var(--vp-c-divider), 0 18px 48px rgba(0, 0, 0, 0.5) !important;
 }
 
-/* On wide screens, give the image more room */
 @media (min-width: 960px) {
   .VPHero .image-container {
-    max-width: 580px !important;
+    max-width: 440px !important;
   }
-
   .VPHero .VPImage {
-    max-width: 580px !important;
-    max-height: 420px !important;
+    max-width: 440px !important;
+    max-height: 340px !important;
   }
 }
 
 @media (min-width: 1280px) {
   .VPHero .image-container {
-    max-width: 640px !important;
+    max-width: 500px !important;
   }
-
   .VPHero .VPImage {
-    max-width: 640px !important;
-    max-height: 480px !important;
+    max-width: 500px !important;
+    max-height: 380px !important;
+  }
+}
+
+/* Keep the text column from being crushed when the image is wide */
+@media (min-width: 960px) {
+  .VPHero .main {
+    min-width: 0 !important;
+    flex: 1 1 auto !important;
+    padding-right: 24px !important;
   }
 }
 
@@ -391,10 +630,15 @@ body {
 
 @media (max-width: 768px) {
   body {
-    font-size: 14px;
+    font-size: 15px;
   }
-
   .VPHero .tagline {
-    font-size: 16px !important;
+    font-size: 15.5px !important;
+  }
+  .VPHero .container::before {
+    font-size: 10px;
+  }
+  .vp-doc h1 + p::first-letter {
+    font-size: 2.8em;
   }
 }

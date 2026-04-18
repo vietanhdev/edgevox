@@ -3,8 +3,8 @@ layout: home
 
 hero:
   name: EdgeVox
-  text: Offline voice agent framework for robots
-  tagline: Agents + Skills + Workflows — sub-second voice pipeline, 2D/3D simulation, fully local
+  text: Voice agents for robots.
+  tagline: Offline agents, skills, and workflows — sub-second voice pipeline, fully on-device.
   actions:
     - theme: brand
       text: Get Started
