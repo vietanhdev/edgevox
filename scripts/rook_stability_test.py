@@ -139,7 +139,7 @@ async def main(host: str, port: int, persona: str) -> int:
                     print(f"  ✗ {f}")
                 all_failures.append((i, turn, failures))
             else:
-                print(f"  ✓ ok")
+                print("  ✓ ok")
 
         # --- Summary ---
         print("\n" + "=" * 60)

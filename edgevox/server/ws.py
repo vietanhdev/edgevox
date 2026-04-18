@@ -109,9 +109,7 @@ def _wire_chess_state_forwarder(ws: WebSocket, core: ServerCore):
     # can't yank it before the send completes; the connection's lifetime
     # covers it, so no explicit cleanup is needed.
     try:
-        prime_task = asyncio.create_task(
-            _send_json(ws, {"type": "chess_state", **deps.snapshot().to_json()})
-        )
+        prime_task = asyncio.create_task(_send_json(ws, {"type": "chess_state", **deps.snapshot().to_json()}))
     except Exception:
         log.debug("chess_state priming failed", exc_info=True)
     else:

@@ -211,9 +211,7 @@ class MoveInterceptHook:
                 f"Mention only {move} and {engine_san}, no other moves, no analysis essays."
             )
         else:
-            new_task = (
-                f"I just played {move}. Say one natural line in your persona's voice."
-            )
+            new_task = f"I just played {move}. Say one natural line in your persona's voice."
 
         return HookResult.replace(
             {**payload, "task": new_task},
