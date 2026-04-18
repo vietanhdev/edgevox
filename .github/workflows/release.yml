@@ -59,3 +59,56 @@ jobs:
       - run: python -m build
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  # Post-publish sanity check: PyPI's CDN sometimes lags the upload
+  # call by 30-60 s, so we poll briefly, then ``pip install`` the
+  # freshly-published wheel into a clean venv on every supported
+  # Python, import the package, and verify ``__version__`` matches
+  # the tag we just pushed. Also exercises the console-script entry
+  # points (``--help`` only — no Qt / models needed). This catches
+  # build-metadata regressions (wrong version in wheel), missing
+  # package data (py.typed marker, piece SVGs), or dependency
+  # resolver breakage that an editable-install test misses.
+  install-smoke-test:
+    runs-on: ubuntu-latest
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y libsndfile1 portaudio19-dev
+      - name: Install from PyPI (with retry for CDN propagation)
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          for i in 1 2 3 4 5 6; do
+            if pip install --no-cache-dir "edgevox==${VERSION}"; then
+              echo "installed edgevox ${VERSION} on attempt ${i}"
+              exit 0
+            fi
+            echo "attempt ${i} failed, PyPI CDN probably still propagating, waiting 20 s"
+            sleep 20
+          done
+          echo "PyPI install still failing after 6 attempts" >&2
+          exit 1
+      - name: Import + version round-trip
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          python -c "
+          import edgevox
+          assert edgevox.__version__ == '${VERSION}', f'expected ${VERSION}, got {edgevox.__version__}'
+          print(f'edgevox {edgevox.__version__} imported OK')
+          "
+      - name: Console-script entry points resolve
+        shell: bash
+        run: |
+          edgevox-cli --help >/dev/null
+          edgevox-setup --help >/dev/null
+          edgevox-chess-robot --help >/dev/null
+          echo "CLI entry points all resolved"

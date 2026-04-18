@@ -198,7 +198,7 @@ Each one supports `--text-mode`, `--simple-ui`, or (default) full TUI. Any of th
 
 ## RookApp — desktop chess robot
 
-![RookApp screenshot](docs/public/rook_app.png)
+![RookApp screenshot](https://raw.githubusercontent.com/vietanhdev/edgevox/main/docs/public/rook_app.png)
 
 Voice-controlled offline chess partner built on EdgeVox — a PySide6 desktop app that runs the Qt UI, the `LLMAgent`, llama-cpp (Llama-3.2-1B Q4_K_M), and Stockfish all in one Python process. No browser, no web server, no Node toolchain. Three personas (`casual`, `grandmaster`, `trash_talker`), six board themes, three piece sets, Kokoro TTS, Whisper STT with barge-in.
 

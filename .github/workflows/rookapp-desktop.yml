@@ -24,7 +24,12 @@ name: RookApp Desktop
 on:
   push:
     branches: [main]
-    tags: ["rook-v*"]
+    # ``v*`` fires on the main edgevox tag (e.g. ``v1.1.0``), so the
+    # same RookApp binaries that ship in the PyPI wheel also get
+    # zipped and attached to the matching GitHub Release. ``rook-v*``
+    # stays supported for RookApp-only point releases that don't
+    # warrant a full framework bump.
+    tags: ["v*", "rook-v*"]
     paths:
       - "edgevox/apps/chess_robot_qt/**"
       - "edgevox/agents/**"
@@ -74,7 +79,7 @@ jobs:
       - id: set
         shell: bash
         run: |
-          if [[ "${GITHUB_REF}" == refs/tags/rook-v* || "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+          if [[ "${GITHUB_REF}" == refs/tags/v* || "${GITHUB_REF}" == refs/tags/rook-v* || "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             echo 'include=[{"name":"macos-arm","runner":"macos-14"},{"name":"windows","runner":"windows-latest"},{"name":"linux","runner":"ubuntu-22.04"}]' >> "$GITHUB_OUTPUT"
           else
             echo 'include=[{"name":"linux","runner":"ubuntu-22.04"}]' >> "$GITHUB_OUTPUT"
@@ -214,9 +219,15 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # Attach the per-OS zip bundles to the existing GitHub Release for
+  # this tag — fires for both ``v*`` (main edgevox releases) and
+  # ``rook-v*`` (RookApp-only point releases). The release was
+  # already created by ``gh release create``; we just upload binaries
+  # onto it. ``make_latest: false`` on non-``v*`` tags keeps the
+  # "Latest" badge tied to the framework version.
   release:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/rook-v')
+    if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/rook-v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -225,14 +236,31 @@ jobs:
         with:
           path: artifacts
 
-      - name: Flatten artifacts
+      - name: Flatten + rename artifacts with tag for release assets
         shell: bash
         run: |
+          TAG="${GITHUB_REF#refs/tags/}"
           mkdir -p release-assets
-          find artifacts -type f -name "*.zip" -exec cp {} release-assets/ \;
+          # Each artifact dir contains RookApp-<os>.zip; rename with
+          # the tag embedded so users downloading the latest release
+          # can tell the asset apart from older ones cached in their
+          # browser (``RookApp-<tag>-<os>.zip``).
+          find artifacts -type f -name "RookApp-*.zip" | while read -r src; do
+            base=$(basename "$src" .zip)            # RookApp-linux
+            os=${base#RookApp-}                      # linux
+            dst="release-assets/RookApp-${TAG}-${os}.zip"
+            cp "$src" "$dst"
+          done
           ls -la release-assets/
 
       - uses: softprops/action-gh-release@v2
         with:
           files: release-assets/*
-          generate_release_notes: true
+          # The v1.x releases are cut by ``gh release create`` before
+          # this workflow fires, so we only need to attach assets —
+          # ``append_body`` keeps any hand-authored notes the user
+          # typed; ``fail_on_unmatched_files: true`` surfaces a
+          # missing leg (e.g. Windows failure) as a red release step
+          # rather than a silently incomplete asset list.
+          fail_on_unmatched_files: true
+          append_body: false
