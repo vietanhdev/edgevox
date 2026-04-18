@@ -46,6 +46,17 @@ class ChatView(QScrollArea):
         self._layout.addStretch(1)
         self.setWidget(self._container)
 
+        # Auto-scroll on any scroll-range change. Whenever the content
+        # grows (new bubble, wrap recomputed, window resized), the
+        # vertical scrollbar's range expands and we snap to the bottom.
+        # This is more robust than a one-shot setValue after insertion
+        # because the layout hasn't finished when we do the insert.
+        self._auto_scroll = True
+        self.verticalScrollBar().rangeChanged.connect(self._on_range_changed)
+        # Detect manual scroll: if the user drags up, stop hijacking.
+        self.verticalScrollBar().valueChanged.connect(self._on_user_scroll)
+        self._last_max = 0
+
         # Placeholder shown when empty.
         self._placeholder = QLabel("talk or type a move to start…")
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -92,12 +103,36 @@ class ChatView(QScrollArea):
             self._placeholder.hide()
         # Insert before the trailing stretch (last item).
         self._layout.insertWidget(self._layout.count() - 1, w)
-        # Auto-scroll on next tick so the new widget has a height.
+        # Re-arm auto-scroll: any explicit add is an app-driven event,
+        # so respect it even if the user had scrolled up mid-session.
+        self._auto_scroll = True
+        # The rangeChanged listener will fire once the layout settles;
+        # this backup tick catches the case where range didn't move
+        # (wrap-only change on the same row count).
         QTimer.singleShot(0, self._scroll_to_bottom)
+
+    def _on_range_changed(self, _min: int, maximum: int) -> None:
+        if not self._auto_scroll:
+            self._last_max = maximum
+            return
+        if maximum != self._last_max:
+            self._last_max = maximum
+            self.verticalScrollBar().setValue(maximum)
+
+    def _on_user_scroll(self, value: int) -> None:
+        bar = self.verticalScrollBar()
+        # If the user has scrolled away from the bottom, pause auto-
+        # follow; snapping back to the bottom once they catch up is
+        # handled by :meth:`_add`.
+        if value < bar.maximum() - 4:
+            self._auto_scroll = False
+        elif value >= bar.maximum() - 1:
+            self._auto_scroll = True
 
     def _scroll_to_bottom(self) -> None:
         bar = self.verticalScrollBar()
         bar.setValue(bar.maximum())
+        self._last_max = bar.maximum()
 
 
 class _Bubble(QWidget):

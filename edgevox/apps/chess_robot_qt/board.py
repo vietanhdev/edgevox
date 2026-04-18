@@ -14,7 +14,6 @@ redraws are cheap even on busy animations.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import chess
@@ -23,20 +22,18 @@ from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QGraphicsScene, QGraphicsView, QWidget
 
+from edgevox.apps.chess_robot_qt.settings import BOARD_THEMES, piece_set_dir
+
 if TYPE_CHECKING:
     from edgevox.integrations.chess.environment import ChessState
 
 
-_LIGHT = QColor("#ead8ba")
-_DARK = QColor("#a87d5a")
 _SELECTED = QColor(255, 215, 0, 120)
 _LAST_MOVE = QColor(88, 170, 255, 90)
 _LEGAL_DOT = QColor(52, 211, 153, 180)
 _LEGAL_CAPTURE = QColor(239, 68, 68, 180)
 _CHECK = QColor(239, 68, 68, 160)
 _COORD = QColor("#8d7a64")
-
-_PIECE_DIR = Path(__file__).resolve().parent / "assets" / "pieces"
 
 
 def _piece_filename(symbol: str) -> str:
@@ -66,15 +63,17 @@ class ChessBoardView(QGraphicsView):
         self._selected: str | None = None
         self._legal: dict[str, bool] = {}  # target → is_capture
         self._orientation: str = "white"
+        self._piece_set: str = "fantasy"
+        self._theme: str = "wood"
+        self._light = QColor(BOARD_THEMES["wood"][0])
+        self._dark = QColor(BOARD_THEMES["wood"][1])
 
-        # Preload and cache piece SVG renderers. Pixmap cache is keyed
-        # by (symbol, size) so resizing regenerates once per size.
+        # Preload + cache piece SVG renderers for the starting set.
+        # Pixmaps are keyed by (piece_set, symbol, size) so switching
+        # sets doesn't poison the cache.
         self._renderers: dict[str, QSvgRenderer] = {}
-        self._pixmaps: dict[tuple[str, int], QPixmap] = {}
-        for symbol in "KQRBNPkqrbnp":
-            path = _PIECE_DIR / _piece_filename(symbol)
-            if path.is_file():
-                self._renderers[symbol] = QSvgRenderer(str(path))
+        self._pixmaps: dict[tuple[str, str, int], QPixmap] = {}
+        self._load_piece_set(self._piece_set)
 
     # ----- public API -----
 
@@ -92,6 +91,35 @@ class ChessBoardView(QGraphicsView):
     def set_orientation(self, side: str) -> None:
         self._orientation = "black" if side.lower().startswith("b") else "white"
         self._redraw()
+
+    def set_piece_set(self, key: str) -> None:
+        """Swap to a different MIT piece set (e.g. ``'celtic'``)."""
+        if key == self._piece_set:
+            return
+        self._load_piece_set(key)
+        self._redraw()
+
+    def set_theme(self, key: str) -> None:
+        """Apply a board-colour theme from :data:`BOARD_THEMES`."""
+        pair = BOARD_THEMES.get(key)
+        if pair is None or key == self._theme:
+            return
+        self._theme = key
+        self._light = QColor(pair[0])
+        self._dark = QColor(pair[1])
+        self._redraw()
+
+    # ----- piece-set loading -----
+
+    def _load_piece_set(self, key: str) -> None:
+        """Install the named set as the current renderers."""
+        self._piece_set = key
+        self._renderers = {}
+        root = piece_set_dir(key)
+        for symbol in "KQRBNPkqrbnp":
+            path = root / _piece_filename(symbol)
+            if path.is_file():
+                self._renderers[symbol] = QSvgRenderer(str(path))
 
     # ----- layout + rendering -----
 
@@ -132,7 +160,7 @@ class ChessBoardView(QGraphicsView):
 
     def _piece_pixmap(self, symbol: str, size: int) -> QPixmap | None:
         """Cached pixmap of the piece's SVG at the target square size."""
-        key = (symbol, size)
+        key = (self._piece_set, symbol, size)
         cached = self._pixmaps.get(key)
         if cached is not None:
             return cached
@@ -170,7 +198,7 @@ class ChessBoardView(QGraphicsView):
             for file in range(8):
                 sq = chess.square_name(chess.square(file, rank))
                 rect = self._sq_to_rect(sq)
-                base = _LIGHT if (file + rank) % 2 else _DARK
+                base = self._light if (file + rank) % 2 else self._dark
                 self._scene.addRect(rect, QPen(Qt.PenStyle.NoPen), QBrush(base))
                 if sq in (last_from, last_to):
                     self._scene.addRect(rect, QPen(Qt.PenStyle.NoPen), QBrush(_LAST_MOVE))

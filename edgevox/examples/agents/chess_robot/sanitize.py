@@ -127,6 +127,40 @@ class VoiceCleanupHook:
         return HookResult.replace(new_payload, reason="markdown stripped for TTS")
 
 
+class BriefingLeakGuard:
+    """Drop any ``[CHESS BRIEFING ...]`` preamble the model parrots back.
+
+    Small models (1-2B) occasionally regurgitate the system-role
+    briefing verbatim instead of speaking in persona. The block is
+    internal context — if it reaches TTS the user hears a wall of FEN /
+    eval / PV noise that makes the robot sound broken.
+
+    Strip anything from the first ``[CHESS BRIEFING`` marker up to and
+    including ``[END BRIEFING]`` (or end-of-string if the closing
+    marker is missing). If the stripped result is empty we substitute a
+    filler so Rook still says *something*.
+    """
+
+    points = frozenset({AFTER_LLM})
+    priority = 68  # run between ThinkTagStrip (70) and VoiceCleanup (65)
+
+    _BRIEFING_RE = re.compile(r"\[CHESS BRIEFING.*?(?:\[END BRIEFING\]|\Z)", re.DOTALL)
+
+    def __call__(self, point: str, ctx: AgentContext, payload: dict) -> HookResult | None:
+        content = payload.get("content") or ""
+        if "[CHESS BRIEFING" not in content:
+            return None
+        cleaned = self._BRIEFING_RE.sub("", content).strip()
+        if not cleaned:
+            cleaned = random.choice(_FALLBACK_FILLERS)
+        if cleaned == content.strip():
+            return None
+        return HookResult.replace(
+            {**payload, "content": cleaned},
+            reason="stripped leaked chess briefing",
+        )
+
+
 class SentenceClipHook:
     """Clip the reply to the first N sentences.
 
@@ -167,4 +201,9 @@ class SentenceClipHook:
         )
 
 
-__all__ = ["SentenceClipHook", "ThinkTagStripHook", "VoiceCleanupHook"]
+__all__ = [
+    "BriefingLeakGuard",
+    "SentenceClipHook",
+    "ThinkTagStripHook",
+    "VoiceCleanupHook",
+]

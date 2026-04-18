@@ -31,16 +31,25 @@ import logging
 import os
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
 from edgevox.agents import AgentContext, LLMAgent
-from edgevox.examples.agents.chess_partner import CHESS_TOOLS
+from edgevox.agents.hooks_builtin import (
+    ContextCompactionHook,
+    MemoryInjectionHook,
+    NotesInjectorHook,
+    PersistSessionHook,
+    TokenBudgetHook,
+)
+from edgevox.agents.memory import Compactor, JSONMemoryStore, NotesFile
 from edgevox.examples.agents.chess_robot.face_hook import RobotFaceHook
 from edgevox.examples.agents.chess_robot.move_intercept import MoveInterceptHook
 from edgevox.examples.agents.chess_robot.rich_board import RichChessAnalyticsHook
 from edgevox.examples.agents.chess_robot.sanitize import (
+    BriefingLeakGuard,
     SentenceClipHook,
     ThinkTagStripHook,
     VoiceCleanupHook,
@@ -56,6 +65,39 @@ from edgevox.llm import LLM
 from edgevox.llm.hooks_slm import default_slm_hooks
 
 log = logging.getLogger(__name__)
+
+_SESSION_ID = "rook-default"
+
+
+def _data_dir() -> Path:
+    """Platform-appropriate per-user data dir for RookApp.
+
+    Uses Qt's ``QStandardPaths`` so we land in the right spot on every
+    platform. Falls back to ``~/.rookapp`` if QStandardPaths returns an
+    empty string (headless CI builds sometimes do).
+    """
+    from pathlib import Path as _P
+
+    from PySide6.QtCore import QStandardPaths
+
+    # AppDataLocation already appends the org + app names we set in main().
+    base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
+    path = _P(base) if base else _P.home() / ".rookapp"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _try_session_store(path: Path):
+    """Best-effort JSON session store. Older EdgeVox builds may not
+    expose :class:`JSONSessionStore`; in that case we skip persistence
+    rather than crash startup."""
+    try:
+        from edgevox.agents.memory import JSONSessionStore
+
+        return JSONSessionStore(path)
+    except Exception:
+        log.debug("JSONSessionStore unavailable; sessions won't persist", exc_info=True)
+        return None
 
 
 @dataclass
@@ -280,31 +322,65 @@ class RookBridge:
             self._env = ChessEnvironment(engine, user_plays=self.config.user_plays)
             self.signals.load_progress.emit("wiring the agent…")
 
+            # Persistent memory + notes directory — one per OS user.
+            # QStandardPaths gives us the right spot on every platform
+            # (~/.local/share/EdgeVox/RookApp on Linux,
+            # ~/Library/Application Support/EdgeVox/RookApp on macOS,
+            # %APPDATA%/EdgeVox/RookApp on Windows).
+            data_dir = _data_dir()
+            self._memory = JSONMemoryStore(data_dir / "memory.json")
+            self._notes = NotesFile(data_dir / "notes.md")
+            self._sessions = _try_session_store(data_dir / "sessions.json")
+            log.info("Rook memory dir: %s", data_dir)
+
+            # No ``tools=`` here on purpose. ``MoveInterceptHook``
+            # applies moves deterministically before the LLM runs, and
+            # ``RichChessAnalyticsHook`` hands the position over as a
+            # system-role briefing. The LLM's job is to *talk*, not to
+            # call tools — exposing tool schemas to a 1B model just
+            # tempts it to regurgitate the JSON schema as its reply
+            # (seen in the Llama-3.2-1B output). If a stronger model is
+            # bound later we can reintroduce CHESS_TOOLS behind a flag.
+            hooks: list[Any] = [
+                MoveInterceptHook(),
+                MoveCommentaryHook(),
+                RobotFaceHook(persona=persona.slug),
+                RichChessAnalyticsHook(),
+                MemoryInjectionHook(memory_store=self._memory),
+                NotesInjectorHook(notes=self._notes),
+                ContextCompactionHook(compactor=Compactor()),
+                ThinkTagStripHook(),
+                BriefingLeakGuard(),
+                VoiceCleanupHook(),
+                # Clip runaway template loops but leave room for a
+                # natural, complete reply. Earlier `max_sentences=2`
+                # was chopping the second half off normal answers.
+                SentenceClipHook(max_sentences=6),
+                TokenBudgetHook(max_context_tokens=3500, keep_last=6),
+                *default_slm_hooks(),
+            ]
+            if self._sessions is not None:
+                hooks.append(PersistSessionHook(session_store=self._sessions, session_id=_SESSION_ID))
             agent = LLMAgent(
                 name=f"Rook — {persona.display_name}",
                 description="Voice-controlled chess robot.",
                 instructions=_compose_instructions(persona.system_prompt),
-                tools=CHESS_TOOLS,
-                hooks=[
-                    MoveInterceptHook(),
-                    MoveCommentaryHook(),
-                    RobotFaceHook(persona=persona.slug),
-                    RichChessAnalyticsHook(),
-                    ThinkTagStripHook(),
-                    VoiceCleanupHook(),
-                    SentenceClipHook(max_sentences=2),
-                    *default_slm_hooks(),
-                ],
+                hooks=hooks,
             )
             agent.bind_llm(self._llm)
             self._agent = agent
 
-            # One Session shared across all turns so the chat history
-            # persists (the agent prepends ``ctx.session.messages`` each
-            # run). Create it lazily once the agent exists.
+            # Resume last session if one is on disk so the chat history
+            # survives app restarts. Fallback to a fresh Session.
             from edgevox.agents import Session
 
-            self._ctx_session = Session()
+            restored = None
+            if self._sessions is not None:
+                try:
+                    restored = self._sessions.load(_SESSION_ID)
+                except Exception:
+                    log.exception("failed to restore session")
+            self._ctx_session = restored or Session()
 
             # Prime the UI with the starting chess state.
             self.signals.chess_state_changed.emit(self._env.snapshot())

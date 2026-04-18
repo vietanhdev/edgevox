@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import signal
 import sys
 
 
@@ -87,6 +88,13 @@ def main(argv: list[str] | None = None) -> None:
 
     from edgevox.apps.chess_robot_qt.bridge import RookBridge, RookConfig
     from edgevox.apps.chess_robot_qt.window import RookWindow
+
+    # Let Ctrl+C terminate the process instead of being swallowed by
+    # Qt's event loop. SIG_DFL kills immediately — we accept losing the
+    # graceful bridge.close() path because the user hit Ctrl+C and
+    # clearly wants out NOW. llama-cpp + stockfish subprocesses clean
+    # themselves up on SIGTERM propagation.
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     app = QApplication(sys.argv)
     app.setApplicationName("RookApp")

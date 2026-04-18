@@ -41,6 +41,12 @@ from edgevox.apps.chess_robot_qt.board import ChessBoardView
 from edgevox.apps.chess_robot_qt.bridge import RookBridge
 from edgevox.apps.chess_robot_qt.chat import ChatView
 from edgevox.apps.chess_robot_qt.face import RobotFaceWidget
+from edgevox.apps.chess_robot_qt.lottie_face import LottieFaceWidget
+from edgevox.apps.chess_robot_qt.lottie_face import is_available as lottie_available
+from edgevox.apps.chess_robot_qt.settings import Settings
+from edgevox.apps.chess_robot_qt.settings_dialog import SettingsDialog
+from edgevox.apps.chess_robot_qt.tts import TTSWorker
+from edgevox.apps.chess_robot_qt.voice import VoiceWorker
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +65,11 @@ class RookWindow(QMainWindow):
     def __init__(self, bridge: RookBridge) -> None:
         super().__init__()
         self._bridge = bridge
+        self._settings = Settings.load()
+        # Sync the loaded settings into the bridge config when present —
+        # e.g. restore the previously-chosen persona at launch.
+        if self._settings.persona != bridge.config.persona:
+            bridge.config.persona = self._settings.persona
         self._accent = QColor(_PERSONA_ACCENT.get(bridge.config.persona, _DEFAULT_ACCENT))
         self.setWindowTitle("RookApp")
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
@@ -103,6 +114,8 @@ class RookWindow(QMainWindow):
         self._board.move_requested.connect(self._on_board_move)
         self._board.setMinimumSize(420, 420)
         self._board.set_orientation(bridge.config.user_plays)
+        self._board.set_piece_set(self._settings.piece_set)
+        self._board.set_theme(self._settings.board_theme)
         bf_col.addWidget(self._board)
         left.addWidget(board_frame, stretch=1)
         self._history = QLabel("no moves yet")
@@ -119,7 +132,7 @@ class RookWindow(QMainWindow):
         face_col = QVBoxLayout(face_frame)
         face_col.setContentsMargins(10, 10, 10, 6)
         face_col.setSpacing(4)
-        self._face = RobotFaceWidget()
+        self._face = LottieFaceWidget() if lottie_available() else RobotFaceWidget()
         self._face.setFixedHeight(220)
         self._face.set_persona(bridge.config.persona)
         face_col.addWidget(self._face, stretch=0)
@@ -167,6 +180,19 @@ class RookWindow(QMainWindow):
         self._app_bar.set_status("loading…")
         self._input.set_enabled(False)
         bridge.start()
+
+        # TTS — kokoro loads lazily on a worker when the first reply
+        # comes in, so we don't pay the ~300 MB ONNX cost at launch.
+        # Mute means don't even load the model.
+        self._tts: TTSWorker | None = None
+        if not self._settings.sfx_muted:
+            self._tts = TTSWorker(parent=self)
+            self._tts.error.connect(lambda msg: log.warning("TTS: %s", msg))
+            self._tts.started.connect(self._on_tts_started)
+            self._tts.finished.connect(self._on_tts_finished)
+            # Warmup in the background — no UI status spam; failures
+            # downgrade to text-only silently.
+            self._tts.start()
 
     # ----- bridge signal handlers -----
 
@@ -224,6 +250,23 @@ class RookWindow(QMainWindow):
             return
         self._reply_label.setText(text)
         self._chat.add_rook(text)
+        if self._tts is not None:
+            self._tts.speak(text)
+
+    def _on_tts_started(self) -> None:
+        # While TTS plays we mute mic input so Rook's own voice doesn't
+        # loop back through STT. Keep the UI-level active flag intact
+        # so the mic button visually represents what the user picked.
+        voice = getattr(self, "_voice", None)
+        if voice is not None and getattr(self, "_voice_active", False):
+            voice.set_listening(False)
+        self._face.set_tempo("speaking")
+
+    def _on_tts_finished(self) -> None:
+        voice = getattr(self, "_voice", None)
+        if voice is not None and getattr(self, "_voice_active", False):
+            voice.set_listening(True)
+        self._face.set_tempo("idle")
 
     def _on_user_echo(self, text: str) -> None:
         self._reply_label.setText("")
@@ -250,15 +293,63 @@ class RookWindow(QMainWindow):
         self._bridge.submit_text("new game")
 
     def _on_mic_clicked(self) -> None:
-        # Voice will land in a later iteration — STT/VAD on a QThread.
-        self._on_error("Voice coming soon — type your move for now.")
+        """Toggle voice input. Lazy-starts the VoiceWorker on first
+        click so we don't pay Whisper's startup cost up-front — voice
+        users opt in; text users never load STT."""
+        if not hasattr(self, "_voice"):
+            if not self._settings.voice_enabled:
+                self._on_error("Voice is disabled in Settings — enable it there first.")
+                return
+            self._voice = VoiceWorker(language="en", parent=self)
+            self._voice.transcript.connect(self._on_voice_transcript)
+            self._voice.error.connect(self._on_error)
+            self._voice.loading.connect(lambda on: self._app_bar.set_status("warming up mic…" if on else "online"))
+            self._voice.ready.connect(lambda: self._voice_enable_listen())
+            self._voice.start()
+            self._voice_active = True
+            self._app_bar.set_mic_active(True)
+            return
+        # Subsequent clicks toggle the listening gate.
+        self._voice_active = not getattr(self, "_voice_active", False)
+        self._voice.set_listening(self._voice_active)
+        self._app_bar.set_mic_active(self._voice_active)
+
+    def _voice_enable_listen(self) -> None:
+        self._voice.set_listening(getattr(self, "_voice_active", True))
+
+    def _on_voice_transcript(self, text: str) -> None:
+        text = text.strip()
+        if not text:
+            return
+        self._chat.add_user(text)
+        self._bridge.submit_text(text)
 
     def _on_menu_action(self, action: str) -> None:
         if action == "new_game":
             self._on_new_game()
+        elif action == "settings":
+            self._open_settings()
         elif action == "about":
             self._app_bar.set_status("RookApp — voice chess on EdgeVox.", error=False)
             QTimer.singleShot(4500, lambda: self._app_bar.set_status("online"))
+
+    def _open_settings(self) -> None:
+        dlg = SettingsDialog(self._settings, self)
+        dlg.changed.connect(self._apply_settings)
+        dlg.exec()
+
+    def _apply_settings(self, new: Settings) -> None:
+        """Apply what we can live; flag the rest as needing a restart."""
+        self._board.set_piece_set(new.piece_set)
+        self._board.set_theme(new.board_theme)
+        if new.sfx_muted != self._settings.sfx_muted:
+            # SFX are a future hook — flag for later.
+            pass
+        # Persona + voice require a restart; show a hint.
+        needs_restart = new.persona != self._settings.persona or new.voice_enabled != self._settings.voice_enabled
+        self._settings = new
+        if needs_restart:
+            self._on_error("Persona / voice change applies next launch.")
 
     # ----- window chrome -----
 
@@ -277,6 +368,11 @@ class RookWindow(QMainWindow):
         super().keyPressEvent(event)
 
     def closeEvent(self, event) -> None:
+        if self._tts is not None:
+            self._tts.stop()
+        voice = getattr(self, "_voice", None)
+        if voice is not None:
+            voice.stop()
         self._bridge.close()
         super().closeEvent(event)
 
@@ -303,30 +399,46 @@ class _AppBar(QFrame):
         row.setContentsMargins(14, 0, 0, 0)
         row.setSpacing(10)
 
-        # Brand cluster — dot + "RookApp" + status text. The status
-        # dot is the same indicator the old appbar used, re-purposed.
+        # Brand cluster: two rows stacked in a QVBoxLayout so the
+        # status caption sits under the brand instead of running
+        # alongside it (which read cluttered before).
+        brand_col = QVBoxLayout()
+        brand_col.setSpacing(0)
+        brand_col.setContentsMargins(0, 4, 0, 4)
+
+        brand_row = QHBoxLayout()
+        brand_row.setSpacing(6)
+        brand_row.setContentsMargins(0, 0, 0, 0)
         self._status_dot = QLabel()
         self._status_dot.setFixedSize(8, 8)
-        row.addWidget(self._status_dot)
+        self._status_dot.setStyleSheet(
+            f"background: {accent.name()}; border-radius: 4px; "
+            "min-width: 8px; max-width: 8px; min-height: 8px; max-height: 8px;"
+        )
+        self._status_dot.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        brand_row.addWidget(self._status_dot)
+        brand_name = QLabel("RookApp")
+        brand_name.setStyleSheet("color: #dbe4ef; font-weight: 600; font-size: 13px; letter-spacing: 0.4px;")
+        brand_name.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        brand_row.addWidget(brand_name)
+        brand_row.addStretch(0)
+        brand_col.addLayout(brand_row)
 
-        brand = QLabel("RookApp")
-        brand.setStyleSheet("color: #dbe4ef; font-weight: 600; font-size: 12px;")
-        row.addWidget(brand)
+        self._status_text = QLabel("booting")
+        self._status_text.setStyleSheet("color: #8796a8; font-family: monospace; font-size: 10px; padding-left: 14px;")
+        self._status_text.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        brand_col.addWidget(self._status_text)
 
-        self._status_text = QLabel("· booting")
-        self._status_text.setStyleSheet("color: #8796a8; font-family: monospace; font-size: 11px;")
-        row.addWidget(self._status_text)
+        row.addLayout(brand_col)
+        row.addSpacing(6)
 
-        # The stretch in the middle is the drag grip — widest click
-        # target in the bar. Any empty strip in this QFrame handles
-        # drag via our mouse events below.
+        # Middle area: pure drag region.
         row.addStretch(1)
 
-        self._turn_pill = QLabel("your turn")
-        self._turn_pill.setStyleSheet(
-            "border: 1px solid #1e2b3a; border-radius: 12px; padding: 3px 10px; "
-            "font-family: monospace; font-size: 11px; color: #8796a8;"
-        )
+        self._turn_pill = QLabel("Your turn")
+        self._turn_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._turn_pill.setMinimumWidth(128)
+        self._turn_pill.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         row.addWidget(self._turn_pill)
 
         self._mic_btn = _IconButton("fa5s.microphone", "Talk to Rook")
@@ -373,20 +485,32 @@ class _AppBar(QFrame):
         return self.childAt(event.position().toPoint())
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
-            target = self._child_at(event)
-            # QToolButton + QPushButton handle their own clicks; dragging
-            # from them should do nothing. QLabels / stretch / the bare
-            # frame allow drag.
-            if not isinstance(target, (QToolButton, QPushButton)):
-                top = self.window()
-                self._drag_offset = event.globalPosition().toPoint() - top.frameGeometry().topLeft()
+        # QToolButton + QPushButton handle their own clicks; dragging
+        # from them should do nothing. QLabels / stretch / the bare
+        # frame allow drag.
+        if event.button() == Qt.MouseButton.LeftButton and not isinstance(
+            self._child_at(event), (QToolButton, QPushButton)
+        ):
+            top = self.window()
+            # Prefer compositor-owned system move — the only drag path
+            # that works on Wayland (where QWidget.move is a no-op) and
+            # keeps drag smooth on X11. Falls through to a manual
+            # offset-based drag if the platform can't service it.
+            handle = top.windowHandle()
+            if handle is not None and handle.startSystemMove():
+                event.accept()
+                return
+            self._drag_offset = event.globalPosition().toPoint() - top.frameGeometry().topLeft()
+            event.accept()
+            return
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
             top = self.window()
             top.move(event.globalPosition().toPoint() - self._drag_offset)
+            event.accept()
+            return
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
@@ -401,17 +525,46 @@ class _AppBar(QFrame):
 
     def set_status(self, text: str, *, error: bool = False) -> None:
         colour = "#ef4444" if error else self._accent.name()
-        self._status_dot.setStyleSheet(f"background: {colour}; border-radius: 4px;")
-        self._status_text.setText(f"RookApp · {text}")
+        text_colour = "#ef4444" if error else "#8796a8"
+        self._status_dot.setStyleSheet(
+            f"background: {colour}; border-radius: 4px; "
+            "min-width: 8px; max-width: 8px; min-height: 8px; max-height: 8px;"
+        )
+        # Elide long status messages at a reasonable width so they don't
+        # push the action buttons off the bar.
+        self._status_text.setText(text)
+        self._status_text.setStyleSheet(
+            f"color: {text_colour}; font-family: monospace; font-size: 11px; padding-left: 4px;"
+        )
 
     def set_turn_label(self, label: str, *, highlight: bool) -> None:
-        colour = self._accent.name() if highlight else "#1e2b3a"
-        text_colour = self._accent.name() if highlight else "#8796a8"
         self._turn_pill.setText(label)
-        self._turn_pill.setStyleSheet(
-            f"border: 1px solid {colour}; border-radius: 12px; padding: 3px 10px; "
-            f"font-family: monospace; font-size: 11px; color: {text_colour};"
+        if highlight:
+            r, g, b = self._accent.red(), self._accent.green(), self._accent.blue()
+            self._turn_pill.setStyleSheet(
+                f"background: rgba({r}, {g}, {b}, 0.18); "
+                f"border: 1px solid {self._accent.name()}; "
+                f"color: {self._accent.name()}; "
+                "border-radius: 13px; padding: 4px 14px; "
+                "font-size: 12px; font-weight: 600; letter-spacing: 0.3px;"
+            )
+        else:
+            self._turn_pill.setStyleSheet(
+                "background: rgba(255, 255, 255, 0.03); border: 1px solid #1e2b3a; "
+                "color: #9aa7b9; border-radius: 13px; padding: 4px 14px; "
+                "font-size: 12px; font-weight: 500; letter-spacing: 0.3px;"
+            )
+
+    def set_mic_active(self, active: bool) -> None:
+        """Highlight the mic button while recording."""
+        colour = self._accent.name() if active else "#9aa7b9"
+        border = self._accent.name() if active else "#1e2b3a"
+        self._mic_btn.setStyleSheet(
+            "QToolButton { background: transparent; border: 1px solid "
+            f"{border}; border-radius: 6px; color: {colour}; "
+            "} QToolButton:hover { background: rgba(255, 255, 255, 0.05); }"
         )
+        self._mic_btn.setIcon(qta.icon("fa5s.microphone", color=colour))
 
     def _open_menu(self) -> None:
         menu = QMenu(self)
@@ -420,6 +573,7 @@ class _AppBar(QFrame):
             "QMenu::item:selected { background: rgba(52, 211, 153, 0.15); }"
         )
         new_action = menu.addAction(qta.icon("fa5s.redo-alt", color="#9aa7b9"), "New game")
+        settings_action = menu.addAction(qta.icon("fa5s.cog", color="#9aa7b9"), "Settings…")
         menu.addSeparator()
         about_action = menu.addAction(qta.icon("fa5s.info-circle", color="#9aa7b9"), "About RookApp")
         btn_rect = self._menu_btn.rect()
@@ -427,6 +581,8 @@ class _AppBar(QFrame):
         chosen = menu.exec(pos)
         if chosen is new_action:
             self.menu_triggered.emit("new_game")
+        elif chosen is settings_action:
+            self.menu_triggered.emit("settings")
         elif chosen is about_action:
             self.menu_triggered.emit("about")
 
