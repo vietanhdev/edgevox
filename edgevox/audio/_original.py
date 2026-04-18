@@ -511,6 +511,13 @@ class AudioRecorder:
         self._interrupt_baseline_count = 0  # frames used for echo baseline measurement
         self._interrupt_baseline_rms = 0.0  # measured echo RMS level
         self._interrupt_speech_buffer: list[np.ndarray] = []  # speech frames captured during interrupt
+        # Set synchronously the instant ``_on_interrupt`` fires; cleared
+        # by ``resume_after_interrupt`` after the brief re-arm delay.
+        # While set, ``force_resume`` no-ops so the consumer's
+        # post-pipeline cleanup doesn't drain the audio queue holding
+        # the user's continuing speech (the source of the
+        # "interrupt only works once" bug).
+        self._barge_in_handling = threading.Event()
         self._stream: sd.InputStream | None = None
         self._thread: threading.Thread | None = None
         # Get sample rate and channel count for the selected device
@@ -608,11 +615,21 @@ class AudioRecorder:
 
         Drains the queued audio because, after a *normal* turn, the
         bot's tail audio captured during playback is just echo we want
-        to throw away. After a *barge-in*, use
-        :meth:`resume_after_interrupt` instead — same generation-counter
-        protection, but the audio queue is preserved so the user's
-        continuing speech lands in the next STT pass.
+        to throw away.
+
+        **No-op when a barge-in is being handled.**
+        :meth:`resume_after_interrupt` is the path used after the user
+        speaks over the bot — it preserves the audio queue so the
+        user's continuing speech lands in Turn 2's STT. If the consumer
+        also calls ``force_resume`` (e.g. from `_on_speech`'s finally
+        block when the pipeline returns) we'd otherwise drain that
+        queue and lose the speech, which is what causes the
+        "interrupt only works once" failure mode.
         """
+        if self._barge_in_handling.is_set():
+            log.debug("force_resume: deferring to barge-in re-arm in flight")
+            return
+
         self._suppress_gen += 1  # invalidate any pending cooldown timers
         gen = self._suppress_gen
 
@@ -634,16 +651,28 @@ class AudioRecorder:
 
         threading.Thread(target=_resume, daemon=True).start()
 
-    def resume_after_interrupt(self, delay: float = 0.15):
-        """Re-arm the mic after a barge-in WITHOUT draining the audio queue.
+    def resume_after_interrupt(self, delay: float = 0.15, *, keep_recent_frames: int = 5):
+        """Re-arm the mic after a barge-in, trimming stale bot-tail audio
+        while preserving the user's continuing speech.
 
-        Critical difference vs :meth:`force_resume`: the audio queued
-        during the brief delay is *kept*. After a user barge-in the user
-        is typically still talking; draining the queue would lose those
-        samples and force the user to re-speak. The delay is just long
-        enough (~150 ms) for PortAudio's output ring + room reverb to
-        die down so the bot's tail audio doesn't fire a phantom user
-        turn the moment we re-enter speech detection.
+        Three things happen after the brief delay:
+
+        1. **Trim the audio queue** to the most recent ``keep_recent_frames``
+           (default 5 = ~160 ms). The oldest queued frames captured the
+           bot's tail TTS audio (PortAudio output ring + room reverb)
+           which would otherwise be processed as "user speech" by VAD
+           the moment ``_suppressed`` clears. Newer frames are the
+           user actually talking.
+        2. **Inject the interrupt speech buffer** into the next STT
+           pass — the frames that triggered the interrupt are already
+           captured in ``_interrupt_speech_buffer``; the main loop
+           injects them at the top of the post-suppression block.
+        3. **Clear ``_suppressed`` and ``_interrupt_detect``** so the
+           main loop runs normal speech detection on the newly-trimmed
+           queue + the user's continuing speech.
+
+        ``_barge_in_handling`` is always cleared in the ``finally`` so a
+        stale flag can't permanently block ``force_resume``.
         """
         self._suppress_gen += 1
         gen = self._suppress_gen
@@ -651,13 +680,31 @@ class AudioRecorder:
         def _resume():
             if delay > 0:
                 time.sleep(delay)
-            if self._suppress_gen != gen:
-                return
-            self._vad.reset()
-            self._interrupt_detect = False
-            self._interrupt_speech_count = 0
-            self._suppressed = False
-            log.debug("Mic resumed after barge-in (delay=%.2fs, gen=%d)", delay, gen)
+            try:
+                if self._suppress_gen != gen:
+                    return
+                # Trim bot-tail audio while preserving the freshest
+                # user-speech frames at the head of the queue.
+                stale = self._audio_q.qsize() - max(0, keep_recent_frames)
+                for _ in range(max(0, stale)):
+                    try:
+                        self._audio_q.get_nowait()
+                    except queue.Empty:
+                        break
+                self._vad.reset()
+                self._interrupt_detect = False
+                self._interrupt_speech_count = 0
+                self._suppressed = False
+                log.debug(
+                    "Mic resumed after barge-in (delay=%.2fs, gen=%d, kept up to %d frames)",
+                    delay,
+                    gen,
+                    keep_recent_frames,
+                )
+            finally:
+                # Always clear so a stale ``_barge_in_handling`` flag
+                # can't permanently block future force_resume calls.
+                self._barge_in_handling.clear()
 
         threading.Thread(target=_resume, daemon=True).start()
 
@@ -712,7 +759,16 @@ class AudioRecorder:
                 if self._use_aec:
                     ref = self._player_ref.get_ref_frame(len(chunk)) if self._player_ref else np.zeros_like(chunk)
                     cleaned = self._aec.process(chunk, ref)
-                    is_user_speech = self._vad.is_speech(cleaned) and rms >= INTERRUPT_MIN_RMS
+                    cleaned_rms = float(np.sqrt(np.mean(cleaned**2)))
+                    # Post-AEC defense: even after spectral subtraction
+                    # leaves residual echo, the cleaned signal should
+                    # retain at least half the reference energy to
+                    # plausibly contain user speech. This catches the
+                    # case where high mic-speaker coupling lets the
+                    # raw-RMS gate pass but VAD then fires on echo
+                    # residual that AEC couldn't fully remove.
+                    post_aec_ok = ref_rms < INTERRUPT_REF_QUIET or cleaned_rms > ref_rms * 0.5
+                    is_user_speech = self._vad.is_speech(cleaned) and cleaned_rms >= INTERRUPT_MIN_RMS and post_aec_ok
                 else:
                     if self._interrupt_baseline_count < INTERRUPT_BASELINE_FRAMES:
                         self._interrupt_baseline_count += 1
@@ -739,6 +795,13 @@ class AudioRecorder:
                         )
                         self._interrupt_detect = False
                         self._interrupt_speech_count = 0
+                        # Set BEFORE _on_interrupt so the consumer's
+                        # synchronous chain (player.interrupt() →
+                        # pipeline returns → _on_speech finally →
+                        # force_resume) sees the flag and skips its
+                        # queue-drain step. resume_after_interrupt
+                        # clears the flag after the 150 ms re-arm.
+                        self._barge_in_handling.set()
                         self._on_interrupt()
                         # Self-schedule a short-delay resume so the
                         # capture buffer flushes into Turn 2's STT

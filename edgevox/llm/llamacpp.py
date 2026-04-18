@@ -31,10 +31,7 @@ _GEMMA_TOOL_CALL_RE = re.compile(
 )
 _GEMMA_QUOTE_RE = re.compile(r"<\|\"\|>")
 _KV_PAIR_RE = re.compile(
-    r"(?P<k>\w+)\s*[:=]\s*"
-    r'(?:"(?P<s>[^"]*)"|'
-    r"(?P<n>-?\d+(?:\.\d+)?)|"
-    r"(?P<b>true|false|True|False))"
+    r"(?P<k>\w+)\s*[:=]\s*" r'(?:"(?P<s>[^"]*)"|' r"(?P<n>-?\d+(?:\.\d+)?)|" r"(?P<b>true|false|True|False))"
 )
 
 # Plain Python-style function call that Gemma sometimes emits instead
