@@ -71,6 +71,19 @@ def _lazy_subcommands() -> None:
     except ImportError:
         pass
 
+    # Rook — voice chess with an expressive SVG robot face. Starts
+    # ``edgevox-serve`` and opens the React UI on ``?mode=rook``.
+    try:
+        from edgevox.examples.agents.chess_robot.app import main as chess_robot_main
+
+        _register(
+            "chess-robot",
+            "RookApp — voice chess against Rook, an expressive offline robot (browser UI).",
+            chess_robot_main,
+        )
+    except ImportError:
+        pass
+
     # MuJoCo humanoid demo — optional, shares the `edgevox[sim-mujoco]` dep.
     try:
         from edgevox.examples.agents.robot_humanoid import APP as HUMANOID_APP

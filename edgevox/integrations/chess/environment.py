@@ -10,6 +10,7 @@ peeking into private fields.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
 from collections.abc import Callable
@@ -121,16 +122,29 @@ class ChessEnvironment:
     def engine_plays(self) -> str:
         return "black" if self._user_plays == chess.WHITE else "white"
 
-    def subscribe(self, listener: StateListener) -> None:
+    def subscribe(self, listener: StateListener) -> Callable[[], None]:
         """Register a listener that receives every :class:`ChessState` update.
 
-        Used by the TUI widget and (eventually) the WebSocket forwarder.
-        Listeners fire under ``self._lock`` in registration order; raise
-        at your own risk — exceptions are logged and do not break the
-        mutation.
+        Used by the TUI widget and the WebSocket forwarder. Listeners
+        fire under ``self._lock`` in registration order; raise at your
+        own risk — exceptions are logged and do not break the mutation.
+
+        Returns an ``unsubscribe()`` function. Calling it removes the
+        listener; calling it a second time is a no-op. Existing callers
+        that don't capture the return value are unaffected — the
+        returned callable is simply discarded. The server's per-session
+        forwarder uses this to avoid stacking subscribers across turns.
         """
         with self._lock:
             self._listeners.append(listener)
+
+        def _unsubscribe() -> None:
+            # ``remove`` raises ``ValueError`` if the listener was
+            # already removed; be idempotent.
+            with self._lock, contextlib.suppress(ValueError):
+                self._listeners.remove(listener)
+
+        return _unsubscribe
 
     def snapshot(self) -> ChessState:
         """Return the current :class:`ChessState` without mutating anything."""

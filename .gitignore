@@ -87,6 +87,15 @@ docs/.vitepress/cache/
 webui/node_modules/
 webui/dist/
 
+# ---- Playwright test artefacts ----
+webui/test-results/
+webui/playwright-report/
+webui/.last-run.json
+webui/blob-report/
+
+# ---- Tauri build outputs (cargo-managed) ----
+webui/src-tauri/target/
+
 # ---- Local scratch / test artifacts ----
 layout_preview.*
 test_layout.py
@@ -100,3 +109,7 @@ scratch/
 *.key
 secrets/
 .claude/
+
+
+webui/test_results/
+webui/tsconfig.tsbuildinfo

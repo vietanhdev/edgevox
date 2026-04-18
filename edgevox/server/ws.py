@@ -44,6 +44,82 @@ async def _send_json(ws: WebSocket, payload: dict) -> None:
     await ws.send_text(json.dumps(payload))
 
 
+def _wire_chess_state_forwarder(ws: WebSocket, core: ServerCore):
+    """Subscribe a ``chess_state`` forwarder to ``core.deps`` for one connection.
+
+    Called once per :func:`handle_connection` (not per agent turn) so
+    subscribers don't accumulate across turns. Primes the client with
+    the current snapshot so a freshly-opened window renders the board
+    immediately instead of showing a placeholder until the first move.
+
+    For single-user desktop apps (chess_robot et al.), we also reset
+    the environment's game state when a new connection arrives *and*
+    there are no other active sessions — this makes "refresh to start
+    over" the natural behavior without breaking multi-user setups.
+
+    Returns an ``unsubscribe()`` callable, or ``None`` if ``core.deps``
+    isn't chess-shaped. Callers use the return value in the connection
+    ``finally`` block to release the subscription on disconnect.
+
+    The send is scheduled on the running event loop via
+    ``run_coroutine_threadsafe`` because environment listeners fire
+    synchronously from whatever thread applied the move — typically
+    the agent worker thread, never the asyncio loop.
+    """
+    deps = core.deps
+    if deps is None or not hasattr(deps, "subscribe") or not hasattr(deps, "snapshot"):
+        return None
+
+    # Fresh-game on connect. A desktop app is single-user by design, and
+    # the user's natural expectation when they open the window (or
+    # reload) is a clean board. Always reset on connect rather than
+    # gating on ``len(core.sessions)`` — that check races with the
+    # previous session's async cleanup and skips the reset when two
+    # connects overlap by milliseconds. Multi-user serving is a
+    # separate config if we ever need it.
+    try:
+        if hasattr(deps, "new_game"):
+            deps.new_game()
+    except Exception:
+        log.debug("chess_state: reset-on-connect failed (non-fatal)", exc_info=True)
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:  # pragma: no cover — always called from the loop
+        return None
+
+    def _forward(state) -> None:
+        to_json = getattr(state, "to_json", None)
+        payload = to_json() if callable(to_json) else dict(state)
+        coro = _send_json(ws, {"type": "chess_state", **payload})
+        fut = asyncio.run_coroutine_threadsafe(coro, loop)
+        # Fire-and-forget: the WebSocket send is best-effort from the
+        # env thread, and exceptions are suppressed so an already-closed
+        # client doesn't poison later moves.
+        with contextlib.suppress(Exception):
+            fut.result(timeout=1.0)
+
+    try:
+        unsub = deps.subscribe(_forward)
+    except Exception:
+        log.exception("Failed to subscribe chess_state forwarder")
+        return None
+
+    # Prime the connection. We keep the task reference (RUF006) so GC
+    # can't yank it before the send completes; the connection's lifetime
+    # covers it, so no explicit cleanup is needed.
+    try:
+        prime_task = asyncio.create_task(
+            _send_json(ws, {"type": "chess_state", **deps.snapshot().to_json()})
+        )
+    except Exception:
+        log.debug("chess_state priming failed", exc_info=True)
+    else:
+        prime_task.add_done_callback(lambda _t: None)
+
+    return unsub
+
+
 async def _send_state(ws: WebSocket, state: str) -> None:
     await _send_json(ws, {"type": "state", "value": state})
 
@@ -56,6 +132,12 @@ async def handle_connection(ws: WebSocket, core: ServerCore) -> None:
     log.info("Session %s connected (active=%d)", session.id, len(core.sessions))
 
     info = core.info()
+    # Wire the chess_state forwarder once per connection (not per turn)
+    # so subscribers don't stack and the client sees the starting
+    # position the moment it connects. ``chess_state_unsub`` stays
+    # ``None`` for non-chess agents; the finally block treats it as a
+    # no-op in that case.
+    chess_state_unsub = _wire_chess_state_forwarder(ws, core)
     try:
         await _send_json(
             ws,
@@ -125,6 +207,9 @@ async def handle_connection(ws: WebSocket, core: ServerCore) -> None:
         with contextlib.suppress(Exception):
             await _send_json(ws, {"type": "error", "message": "internal error"})
     finally:
+        if chess_state_unsub is not None:
+            with contextlib.suppress(Exception):
+                chess_state_unsub()
         core.sessions.pop(session.id, None)
         with contextlib.suppress(Exception):
             await ws.close()
@@ -308,6 +393,43 @@ def _run_text_turn_blocking(
     )
 
 
+def agent_event_to_ws_message(event) -> dict | None:
+    """Map an :class:`AgentEvent` to the outbound WebSocket message.
+
+    Returns ``None`` for events the client doesn't care about, so the
+    caller can skip the ``send_json``. Pure function — extracted from
+    the per-turn worker so it's directly unit-testable and so new
+    event kinds land as a single branch with a single test.
+
+    Kinds forwarded today:
+
+    - ``tool_call`` — tool observability (name, args, ok, result, error).
+    - ``skill_goal`` / ``skill_cancelled`` / ``handoff`` / ``safety_preempt``
+      — control-flow events, forwarded verbatim.
+    - ``robot_face`` — Rook face expression signals from
+      :class:`RobotFaceHook` (mood, gaze, tempo, persona).
+    """
+    kind = getattr(event, "kind", None)
+    payload = getattr(event, "payload", None)
+    if kind == "tool_call":
+        r = payload
+        return {
+            "type": "tool_call",
+            "name": getattr(r, "name", ""),
+            "arguments": getattr(r, "arguments", {}),
+            "ok": getattr(r, "ok", False),
+            "result": getattr(r, "result", None),
+            "error": getattr(r, "error", None),
+        }
+    if kind in {"skill_goal", "skill_cancelled", "handoff", "safety_preempt"}:
+        return {"type": kind, "agent": getattr(event, "agent_name", ""), "payload": payload}
+    if kind == "robot_face":
+        # Payload is already a JSON-safe dict (``asdict(RobotFaceEvent)``),
+        # so we splat it next to the ``type`` discriminator.
+        return {"type": "robot_face", **(payload or {})}
+    return None
+
+
 def _run_agent_turn(
     core: ServerCore,
     session: SessionState,
@@ -340,44 +462,15 @@ def _run_agent_turn(
     assert agent is not None  # callers gate on core.agent
 
     t_start = time.perf_counter()
-    unsubscribers: list = []
 
     def _on_event(event) -> None:
-        # Tool-call observability: forward both start and result to the
-        # client so the UI can animate progress + render outcomes.
-        if event.kind == "tool_call":
-            r = event.payload
-            send_json(
-                {
-                    "type": "tool_call",
-                    "name": getattr(r, "name", ""),
-                    "arguments": getattr(r, "arguments", {}),
-                    "ok": getattr(r, "ok", False),
-                    "result": getattr(r, "result", None),
-                    "error": getattr(r, "error", None),
-                }
-            )
-        elif event.kind in {"skill_goal", "skill_cancelled", "handoff", "safety_preempt"}:
-            send_json({"type": event.kind, "agent": event.agent_name, "payload": event.payload})
+        message = agent_event_to_ws_message(event)
+        if message is not None:
+            send_json(message)
 
-    # Domain event: ChessEnvironment publishes ChessState snapshots after
-    # every mutation. Forward them as ``chess_state`` messages so the
-    # React ChessBoard / EvalBar / MoveList light up in real time.
-    deps = core.deps
-    if deps is not None and hasattr(deps, "subscribe") and hasattr(deps, "snapshot"):
-        try:
-
-            def _forward_chess_state(state) -> None:
-                to_json = getattr(state, "to_json", None)
-                payload = to_json() if callable(to_json) else dict(state)
-                send_json({"type": "chess_state", **payload})
-
-            deps.subscribe(_forward_chess_state)
-            # Prime with the current snapshot so a freshly-connected client
-            # sees the board immediately, not only after the first move.
-            _forward_chess_state(deps.snapshot())
-        except Exception:
-            log.exception("Failed to wire chess_state forwarder")
+    # ``chess_state`` forwarder is wired once per connection in
+    # :func:`handle_connection` — see ``_wire_chess_state_forwarder``.
+    # Don't re-subscribe here; it would stack one listener per turn.
 
     ctx = AgentContext(
         session=session.agent_session,
@@ -391,10 +484,6 @@ def _run_agent_turn(
         log.exception("Agent run failed for session %s", session.id)
         send_json({"type": "error", "message": "agent turn failed"})
         return
-    finally:
-        for unsub in unsubscribers:
-            with contextlib.suppress(Exception):
-                unsub()
 
     reply = (result.reply or "").strip()
     t_llm = time.perf_counter() - t_start

@@ -5,7 +5,7 @@ mod sidecar;
 
 use std::sync::Arc;
 
-use tauri::{Manager, RunEvent, State};
+use tauri::{RunEvent, State};
 use tokio::sync::OnceCell;
 
 use crate::sidecar::SidecarHandle;
@@ -43,6 +43,19 @@ async fn get_ws_url(state: State<'_, AppState>) -> Result<String, String> {
     Ok(sidecar.ws_url.clone())
 }
 
+/// Frontend startup calls this to learn which layout to mount. Reads
+/// ``ROOK_MODE=1`` from the environment; returns ``"rook"`` when set,
+/// ``"default"`` otherwise. The index HTML runs ``invoke("get_mode")``
+/// before React mounts, so the selection is synchronous from the
+/// user's perspective.
+#[tauri::command]
+fn get_mode() -> String {
+    match std::env::var("ROOK_MODE") {
+        Ok(v) if v == "1" || v.eq_ignore_ascii_case("true") => "rook".into(),
+        _ => "default".into(),
+    }
+}
+
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
@@ -52,7 +65,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(state)
-        .invoke_handler(tauri::generate_handler![get_ws_url])
+        .invoke_handler(tauri::generate_handler![get_ws_url, get_mode])
         .build(tauri::generate_context!())
         .expect("failed to build Tauri app")
         .run(move |_app, event| {

@@ -86,6 +86,7 @@ edgevox-cli = "edgevox.cli.main:main"
 edgevox-setup = "edgevox.setup_models:main"
 edgevox-serve = "edgevox.server.main:main"
 edgevox-agent = "edgevox.examples.agents.cli:main"
+edgevox-chess-robot = "edgevox.examples.agents.chess_robot.app:main"
 
 [project.urls]
 Homepage = "https://github.com/vietanhdev/edgevox"

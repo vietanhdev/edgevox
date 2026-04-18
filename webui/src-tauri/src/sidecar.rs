@@ -146,6 +146,36 @@ impl SidecarHandle {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
 
+        // AppImage / snap / flatpak wrappers inject PYTHONHOME and
+        // PYTHONPATH that point at THEIR bundled runtime, which our
+        // managed venv cannot use — you get ``ModuleNotFoundError: No
+        // module named 'encodings'`` at import time. Scrub them so
+        // the venv's python locates its own stdlib via the interpreter
+        // embedded in ``<venv>/bin/python``. We also drop APPDIR /
+        // APPIMAGE env vars so subprocesses stop inheriting the
+        // AppImage sandbox's paths.
+        for var in ["PYTHONHOME", "PYTHONPATH", "PYTHONNOUSERSITE"] {
+            cmd.env_remove(var);
+        }
+        if std::env::var_os("APPDIR").is_some() {
+            for var in ["APPDIR", "APPIMAGE", "LD_LIBRARY_PATH", "LD_PRELOAD", "GI_TYPELIB_PATH"] {
+                cmd.env_remove(var);
+            }
+        }
+
+        // Optional --agent spec. ``EDGEVOX_DESKTOP_AGENT`` lets a
+        // single binary boot into any factory the user wants (e.g.
+        // ``edgevox.examples.agents.chess_robot.app:build_rook_server_agent``
+        // for Rook). When unset, the server runs the generic voice
+        // assistant — identical to the behaviour before this flag
+        // existed.
+        if let Ok(agent) = std::env::var("EDGEVOX_DESKTOP_AGENT") {
+            if !agent.trim().is_empty() {
+                log::info!("--agent {agent}");
+                cmd.args(["--agent", agent.trim()]);
+            }
+        }
+
         let mut child = cmd.spawn().context("failed to spawn edgevox-serve")?;
 
         // Forward server stdout/stderr to the Rust logger so `npm run

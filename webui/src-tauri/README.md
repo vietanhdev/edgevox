@@ -81,8 +81,11 @@ provisions one on first run.
   `webui/` with a 1024×1024 logo to generate the files listed in
   `tauri.conf.json`. Until then `cargo tauri build` will fail on the
   bundle step (dev mode works without icons).
-- **Python backend runs through `LLMAgent`** — for chess specifically,
-  the existing server path (`edgevox/server/ws.py`) bypasses
-  `LLMAgent`, so `chess_state` events don't yet reach the web UI. A
-  chess-aware server mode is a follow-up; the React components
-  (`ChessBoard.tsx` etc.) already consume the message shape.
+- **Chess / agent backend** — `edgevox/server/ws.py` now routes every
+  turn through `LLMAgent` and forwards `chess_state` snapshots, so the
+  React `ChessBoard` / `EvalBar` / `MoveList` panels light up
+  automatically when the sidecar is launched with
+  `--agent edgevox.examples.agents.chess_partner:build_server_agent`.
+  The Tauri sidecar manager still spawns `edgevox-serve` without
+  `--agent` by default; passing the chess flag through the sidecar
+  config is a TODO.

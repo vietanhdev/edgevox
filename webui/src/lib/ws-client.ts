@@ -31,6 +31,16 @@ export type ServerMessage =
       is_game_over?: boolean;
       game_over_reason?: string | null;
       winner?: "white" | "black" | null;
+    }
+  | {
+      type: "robot_face";
+      mood: "calm" | "curious" | "amused" | "worried" | "triumphant" | "defeated";
+      gaze_x: number;
+      gaze_y: number;
+      persona: string;
+      tempo: "idle" | "thinking" | "speaking";
+      last_move_san?: string | null;
+      is_game_over?: boolean;
     };
 
 export interface WsHandlers {
