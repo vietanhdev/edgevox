@@ -55,6 +55,7 @@ EdgeVox is not just a library — [**RookApp**](/guide/desktop) is a reference P
 
 - [Quick start](/guide/quickstart) — install and run in 5 minutes
 - [Architecture](/guide/architecture) — deep dive into the streaming pipeline
+- [Component Design](/guide/components) — per-module design with mermaid diagrams
 
 **Features**
 
