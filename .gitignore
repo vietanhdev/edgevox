@@ -99,3 +99,4 @@ scratch/
 *.pem
 *.key
 secrets/
+.claude/

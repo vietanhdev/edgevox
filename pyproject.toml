@@ -131,3 +131,15 @@ testpaths = ["tests"]
 markers = [
     "integration: tests that download real models and run inference (deselect with '-m \"not integration\"')",
 ]
+# ROS2's ``launch_testing`` + ``launch_testing_ros_pytest_entrypoint``
+# plugins (installed on every sourced ROS2 workspace) are incompatible
+# with modern pytest: they declare a hook ``pytest_launch_collect_makemodule``
+# that no longer has a spec, so pluggy raises PluginValidationError at
+# collection time. Because plugins load before conftest.py runs, we
+# can't disable them from Python — users running the suite inside a
+# sourced ROS2 environment must export::
+#
+#   export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
+#
+# before invoking pytest. Outside a ROS2 env these plugins aren't
+# installed so nothing is needed.

@@ -8,23 +8,91 @@ EdgeVox includes an optional ROS2 bridge for robotics applications. It exposes t
 # Source your ROS2 workspace (rclpy must be importable)
 source /opt/ros/jazzy/setup.bash
 
-# Launch with ROS2
+# Voice pipeline (TUI) over ROS2
 edgevox --ros2
 
-# Launch with a custom namespace (for multi-robot setups)
+# Custom namespace — typical multi-robot setup
 edgevox --ros2 --ros2-namespace /robot1/voice
+
+# Agent examples expose the same bridge plus robot_state / agent_event
+edgevox-agent robot-irsim --text-mode --ros2
+edgevox-agent robot-panda --text-mode --ros2 --ros2-namespace /robot1/arm
 ```
 
 If `rclpy` is not available, the bridge falls back to a `NullBridge` (no-op) and EdgeVox runs normally without ROS2.
 
-### Using the Launch File
+### Running the pytest suite inside a sourced ROS2 workspace
+
+ROS2 ships a `launch_testing` pytest plugin that declares a hook incompatible with modern pytest (`pytest_launch_collect_makemodule`). When a sourced ROS2 environment is on `PYTHONPATH`, pytest loads the plugin at startup and fails collection. Disable plugin autoloading before invoking pytest:
 
 ```bash
-# Basic launch
-ros2 launch edgevox edgevox.launch.py
+source /opt/ros/jazzy/setup.bash
+export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
+pytest tests/
+```
 
-# With parameters
+Outside a ROS2 env the variable has no effect.
+
+### Using the Launch Files
+
+```bash
+# Voice pipeline only
+ros2 launch edgevox edgevox.launch.py
 ros2 launch edgevox edgevox.launch.py namespace:=/robot1/voice language:=vi
+
+# IR-SIM agent demo (headless by default, voice + ROS2)
+ros2 launch edgevox edgevox_irsim.launch.py
+ros2 launch edgevox edgevox_irsim.launch.py namespace:=/robot1/voice
+
+# MuJoCo Panda pick-and-place demo
+ros2 launch edgevox edgevox_panda.launch.py
+ros2 launch edgevox edgevox_panda.launch.py namespace:=/robot1/arm state_hz:=20.0
+```
+
+### Tier 2b — MuJoCo humanoid (`robot-humanoid`)
+
+```bash
+edgevox-agent robot-humanoid --simple-ui                        # Unitree G1, viewer + voice (default)
+edgevox-agent robot-humanoid --simple-ui --model-source unitree_h1
+edgevox-agent robot-humanoid --text-mode --no-render --ros2     # headless chat + ROS2 bridge
+edgevox-agent robot-humanoid --mjcf /path/to/scene.xml          # custom MJCF
+```
+
+Models are auto-fetched from `nrl-ai/edgevox-models/mujoco_scenes/` on HuggingFace (~15-17 MB per robot, cached) with a git sparse-clone fallback to `google-deepmind/mujoco_menagerie`.
+
+Skills: `walk_forward(distance)`, `walk_backward(distance)`, `turn_left(degrees)`, `turn_right(degrees)`, `stand`, `get_pose`. The adapter runs a procedural walking gait that swings `{side}_hip_pitch`, `{side}_knee`, `{side}_ankle_pitch` (and counter-swings `{side}_shoulder_pitch`, `{side}_elbow`) so legs + arms visibly step. Plug in an ONNX walking policy via `MujocoHumanoidEnvironment.set_walking_policy(...)` for real RL locomotion.
+
+### Tier 3 — external ROS2 sim / real robot (`robot-external`)
+
+EdgeVox drives any ROS2 process that speaks the standard mobile-robot contract — Gazebo Harmonic, Isaac Sim (via ROS2 bridge), a real Unitree Go2, etc.
+
+```bash
+# Terminal A — your sim or robot (whatever you prefer)
+ros2 launch nav2_bringup tb3_simulation_launch.py use_sim_time:=True
+
+# Terminal B — the voice agent
+edgevox-agent robot-external --text-mode
+edgevox-agent robot-external --text-mode --namespace /robot1
+```
+
+Contract:
+
+| Dir | Topic               | Type                          |
+|-----|---------------------|-------------------------------|
+| sub | `odom`              | `nav_msgs/Odometry`           |
+| sub | `scan`              | `sensor_msgs/LaserScan` (optional) |
+| sub | `camera/image_raw`  | `sensor_msgs/Image` (optional)|
+| pub | `cmd_vel`           | `geometry_msgs/Twist`         |
+| pub | `goal_pose`         | `geometry_msgs/PoseStamped`   |
+
+Skills: `navigate_to(location)` or `navigate_xy(x, y)`, `stop`, `get_pose`.
+
+With the IR-SIM launch file running, drive the robot from another terminal:
+
+```bash
+ros2 topic pub --once /edgevox/text_input std_msgs/msg/String "{data: 'go to kitchen'}"
+ros2 topic echo /edgevox/robot_state --once
+ros2 topic echo /edgevox/agent_event
 ```
 
 ## Namespace and Topic Names
@@ -70,6 +138,54 @@ ros2 param set /edgevox/edgevox muted true
 
 Parameters and topic-based commands (`set_language`, `command`) both work — use whichever fits your integration pattern.
 
+## Robot interop (Nav2 / TF2 / sensors)
+
+When `edgevox-agent --ros2` launches with a sim attached, the bridge also brings up a `RobotROS2Adapter` that wires the sim into standard ROS2 robotics topics:
+
+| Topic | Direction | Type | Notes |
+|-------|-----------|------|-------|
+| `/tf` | out | `tf2_msgs/TFMessage` | `map → base_link` (IR-SIM) or `map → ee_link` (MuJoCo) at 30 Hz |
+| `pose` | out | `geometry_msgs/PoseStamped` | same pose as TF for non-TF consumers |
+| `scan` | out | `sensor_msgs/LaserScan` | 2D lidar (IR-SIM only) at 10 Hz |
+| `image_raw` | out | `sensor_msgs/Image` | offscreen camera (MuJoCo, rgb8) at 5 Hz — set `MUJOCO_GL=egl` or `osmesa` on headless hosts |
+| `cmd_vel` | in | `geometry_msgs/Twist` | Nav2-style velocity command (IR-SIM); times out after 0.5 s so a dropped stream halts the robot |
+| `goal_pose` | in | `geometry_msgs/PoseStamped` | 2D goal for IR-SIM (`navigate_to`) or 3D target for MuJoCo (`move_to`) |
+
+Each capability is enabled only if the underlying sim exposes the relevant method, so a sim without a lidar simply doesn't advertise `scan`.
+
+## Services
+
+Query commands are exposed as `std_srvs/srv/Trigger` services under the same namespace — `response.message` carries a JSON payload:
+
+```bash
+ros2 service call /edgevox/list_voices std_srvs/srv/Trigger
+ros2 service call /edgevox/hardware_info std_srvs/srv/Trigger
+```
+
+The legacy pub/sub path (`/command` → `/info`) still works unchanged.
+
+## Actions — `execute_skill`
+
+Build the companion interface package once:
+
+```bash
+cd ~/ros_ws
+ln -s <edgevox-repo>/edgevox_msgs src/edgevox_msgs   # or copy
+colcon build --packages-select edgevox_msgs
+source install/setup.bash
+```
+
+Then with `edgevox-agent --ros2` running, send a goal to the agent's skill dispatcher:
+
+```bash
+ros2 action send_goal /edgevox/execute_skill edgevox_msgs/action/ExecuteSkill \
+  "{skill_name: 'navigate_to', arguments_json: '{\"room\": \"kitchen\"}'}" --feedback
+```
+
+`arguments_json` is a JSON object string that maps keyword → value, so the same action works for every skill the agent exposes (`navigate_to`, `move_to`, `grasp`, …) without per-skill IDL. Feedback arrives as JSON mirroring `/agent_event`; the result has `ok` + `result_json` + `error`.
+
+If `edgevox_msgs` isn't built, the bridge prints a one-line skip note and the rest of the stack (topics, services, TF) continues to work.
+
 ## Published Topics
 
 ### Pipeline Output
@@ -81,6 +197,8 @@ Parameters and topic-based commands (`set_language`, `command`) both work — us
 | `state` | `String` | State | Pipeline state: `listening`, `transcribing`, `thinking`, `speaking`, `interrupted` |
 | `audio_level` | `Float32` | Sensor | Microphone level (0.0 - 1.0) |
 | `metrics` | `String` | Reliable | JSON latency metrics (stt, llm, tts, ttfs, total) |
+| `robot_state` | `String` | State | JSON snapshot of the sim/robot world (pose, battery, grasped object, …). Republished at `--ros2-state-hz` (default 10) by `edgevox-agent --ros2`. |
+| `agent_event` | `String` | Reliable | JSON stream of agent events: `tool_call`, `skill_goal`, `skill_cancelled`, `handoff`, `safety_preempt`. Emitted by `edgevox-agent --ros2`. |
 
 ### Streaming Output
 

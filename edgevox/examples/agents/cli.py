@@ -62,12 +62,31 @@ def _lazy_subcommands() -> None:
     except ImportError:
         pass
 
-    # Chess partner — needs an engine binary on $PATH but python-chess is core.
+    # Chess partner — python-chess is core; needs a UCI engine on $PATH.
     try:
         from edgevox.examples.agents.chess_partner import APP as CHESS_APP
         from edgevox.examples.agents.chess_partner import main as chess_main
 
         _register("chess", CHESS_APP.description, chess_main)
+    except ImportError:
+        pass
+
+    # MuJoCo humanoid demo — optional, shares the `edgevox[sim-mujoco]` dep.
+    try:
+        from edgevox.examples.agents.robot_humanoid import APP as HUMANOID_APP
+        from edgevox.examples.agents.robot_humanoid import main as humanoid_main
+
+        _register("robot-humanoid", HUMANOID_APP.description, humanoid_main)
+    except ImportError:
+        pass
+
+    # Tier 3 external-ROS2 demo — needs a sourced ROS2 env. Registered
+    # last so plain --help stays fast on non-ROS2 machines.
+    try:
+        from edgevox.examples.agents.robot_external import APP as EXTERNAL_APP
+        from edgevox.examples.agents.robot_external import main as external_main
+
+        _register("robot-external", EXTERNAL_APP.description, external_main)
     except ImportError:
         pass
 
