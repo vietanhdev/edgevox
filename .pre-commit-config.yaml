@@ -7,8 +7,12 @@ repos:
     rev: v5.0.0
     hooks:
       - id: trailing-whitespace
-        exclude: \.md$
+        # Markdown uses trailing spaces as line-breaks, and vendored
+        # assets (Lottie JSON, SVG piece sets) must stay byte-identical
+        # to upstream so diffs don't mask attribution changes.
+        exclude: '\.md$|^edgevox/apps/chess_robot_qt/assets/'
       - id: end-of-file-fixer
+        exclude: '^edgevox/apps/chess_robot_qt/assets/'
       - id: check-yaml
       - id: check-toml
       - id: check-json
