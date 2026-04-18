@@ -6,17 +6,32 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-![EdgeVox TUI Screenshot](docs/public/screenshot.png)
-
-![MuJoCo Franka Panda](docs/public/robot_panda.png)
-
-![Unitree G1 Humanoid](docs/public/robot_unitree_g1.png)
-
-![RookApp — PySide6 desktop chess robot](docs/public/rook_app.png)
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <a href="docs/public/screenshot.png"><img src="docs/public/screenshot.png" alt="EdgeVox TUI — streaming voice pipeline"/></a>
+      <br/><sub><b>Voice pipeline TUI</b> — streaming STT · LLM · TTS with VAD barge-in</sub>
+    </td>
+    <td align="center" width="50%">
+      <a href="docs/public/robot_panda.png"><img src="docs/public/robot_panda.png" alt="MuJoCo Franka Panda pick-and-place"/></a>
+      <br/><sub><b>MuJoCo · Franka arm</b> — voice-controlled pick-and-place</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <a href="docs/public/robot_unitree_g1.png"><img src="docs/public/robot_unitree_g1.png" alt="Unitree G1 humanoid"/></a>
+      <br/><sub><b>Unitree G1 humanoid</b> — procedural gait + ONNX policy slot</sub>
+    </td>
+    <td align="center" width="50%">
+      <a href="docs/public/rook_app.png"><img src="docs/public/rook_app.png" alt="RookApp — PySide6 desktop chess robot"/></a>
+      <br/><sub><b>RookApp desktop</b> — offline chess partner (Qt + LLMAgent + Stockfish, one Python process)</sub>
+    </td>
+  </tr>
+</table>
 
 ---
 
-**Agents + Skills + Workflows** &nbsp;|&nbsp; **2D sim (IR-SIM)** &nbsp;|&nbsp; **3D sim (MuJoCo)** &nbsp;|&nbsp; **0.8s voice TTFT** &nbsp;|&nbsp; **15 languages** &nbsp;|&nbsp; **56 voices** &nbsp;|&nbsp; **ROS2-native**
+**Agents + Skills + Workflows** &nbsp;|&nbsp; **2D sim (IR-SIM)** &nbsp;|&nbsp; **3D sim (MuJoCo)** &nbsp;|&nbsp; **0.8s voice TTFT** &nbsp;|&nbsp; **16 languages** &nbsp;|&nbsp; **56 voices** &nbsp;|&nbsp; **ROS2-native** &nbsp;|&nbsp; **Ships as a desktop app**
 
 ---
 
@@ -88,7 +103,7 @@ Subscribes to `odom`, optionally `scan` + `camera/image_raw`, and publishes `cmd
 ### Voice pipeline (substrate)
 
 - **Sub-second streaming** — 0.8 s first-audio on RTX 3080 (VAD 32 ms + faster-whisper + Gemma 4 E2B + Kokoro)
-- **15 languages** with 56 voices across 4 TTS backends
+- **16 languages** with 56 voices across 4 TTS backends
 - **Robust voice interrupt** — speak over the bot to cut it off; `specsub` AEC on by default + energy-ratio gate so the bot doesn't hear itself; LLM generation aborted via llama-cpp `stopping_criteria` (≤40 ms cancellation latency); back-to-back barge-ins re-arm cleanly
 - **4 wake words** — "Hey Jarvis", "Alexa", "Hey Mycroft", "Okay Nabu"
 - **4 interfaces** — TUI (Textual), Web UI (FastAPI + Vue), simple CLI, text mode
@@ -219,7 +234,7 @@ All tiers implement the same `SimEnvironment` protocol — agent code doesn't ch
 
 ## Voice pipeline
 
-EdgeVox's original identity and the agent framework's substrate. Streaming STT → LLM → TTS with voice interrupt, wake words, 15 languages, TUI and web UIs. Run it without any agent code:
+EdgeVox's original identity and the agent framework's substrate. Streaming STT → LLM → TTS with voice interrupt, wake words, 16 languages, TUI and web UIs. Run it without any agent code:
 
 ```bash
 edgevox                         # full TUI (default)
