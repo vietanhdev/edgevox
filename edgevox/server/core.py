@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from edgevox.core.config import LANGUAGES, get_lang
 from edgevox.llm import LLM
@@ -22,6 +22,7 @@ from edgevox.stt import create_stt
 from edgevox.tts import create_tts, get_piper_voices
 
 if TYPE_CHECKING:
+    from edgevox.agents import Agent
     from edgevox.server.session import SessionState
     from edgevox.stt import BaseSTT
     from edgevox.tts import BaseTTS
@@ -63,6 +64,25 @@ class ServerCore:
 
         # Snapshot the empty (system-prompt-only) history so new sessions start fresh.
         self._base_history: list[dict] = list(self.llm._history)
+
+        # Optional :class:`~edgevox.agents.Agent` driving the turn.
+        # When set, ``ws.py`` routes each segment through ``agent.run(ctx)``
+        # instead of the legacy ``llm.chat_stream`` path — hooks, tools,
+        # events, and ``ctx.deps`` integrations all work identically to
+        # the TUI. ``deps`` is the shared dependency object handed to
+        # every :class:`AgentContext` (e.g. a :class:`ChessEnvironment`).
+        self.agent: Agent | None = None
+        self.deps: Any = None
+
+    def bind_agent(self, agent: Agent, deps: Any = None) -> None:
+        """Attach an agent + shared deps to drive the WebSocket pipeline.
+
+        The agent's LLM must already be bound (use ``agent.bind_llm(core.llm)``
+        if it isn't — see ``edgevox.server.main.main`` for the standard
+        wiring).
+        """
+        self.agent = agent
+        self.deps = deps
 
     def fresh_history(self) -> list[dict]:
         """Return a copy of the system-prompt-only history for new sessions."""

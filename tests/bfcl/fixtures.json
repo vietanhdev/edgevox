@@ -1,0 +1,75 @@
+[
+  {
+    "id": "simple-001",
+    "category": "simple",
+    "model_output": "<tool_call>\n{\"name\": \"get_time\", \"arguments\": {}}\n</tool_call>",
+    "tools": [
+      {"type": "function", "function": {"name": "get_time", "parameters": {"type": "object", "properties": {}}}}
+    ],
+    "gold": [
+      {"id": "g_0", "function": {"name": "get_time", "arguments": "{}"}}
+    ]
+  },
+  {
+    "id": "simple-002",
+    "category": "simple",
+    "model_output": "<tool_call>\n{\"name\": \"set_temp\", \"arguments\": {\"c\": 21}}\n</tool_call>",
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "set_temp",
+          "parameters": {
+            "type": "object",
+            "properties": {"c": {"type": "integer"}},
+            "required": ["c"]
+          }
+        }
+      }
+    ],
+    "gold": [
+      {"id": "g_0", "function": {"name": "set_temp", "arguments": "{\"c\": 21}"}}
+    ]
+  },
+  {
+    "id": "parallel-001",
+    "category": "parallel",
+    "model_output": "<tool_call>\n{\"name\": \"set_light\", \"arguments\": {\"room\": \"kitchen\", \"on\": true}}\n</tool_call>\n<tool_call>\n{\"name\": \"set_light\", \"arguments\": {\"room\": \"bedroom\", \"on\": false}}\n</tool_call>",
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "set_light",
+          "parameters": {
+            "type": "object",
+            "properties": {"room": {"type": "string"}, "on": {"type": "boolean"}}
+          }
+        }
+      }
+    ],
+    "gold": [
+      {"id": "g_0", "function": {"name": "set_light", "arguments": "{\"room\": \"kitchen\", \"on\": true}"}},
+      {"id": "g_1", "function": {"name": "set_light", "arguments": "{\"room\": \"bedroom\", \"on\": false}"}}
+    ]
+  },
+  {
+    "id": "irrelevance-001",
+    "category": "irrelevance",
+    "model_output": "I don't have access to weather data, sorry.",
+    "tools": [
+      {"type": "function", "function": {"name": "get_time", "parameters": {"type": "object", "properties": {}}}}
+    ],
+    "gold": []
+  },
+  {
+    "id": "qwen3-think-001",
+    "category": "simple",
+    "model_output": "<think>The user asked the time.\n<tool_call>{\"name\": \"get_time\", \"arguments\": {}}</tool_call>\n</think>",
+    "tools": [
+      {"type": "function", "function": {"name": "get_time", "parameters": {"type": "object", "properties": {}}}}
+    ],
+    "gold": [
+      {"id": "g_0", "function": {"name": "get_time", "arguments": "{}"}}
+    ]
+  }
+]

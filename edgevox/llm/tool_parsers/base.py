@@ -77,6 +77,11 @@ class BaseFormatDetector(ABC):
                         act.get("parameters") or act.get("arguments", {}),
                         ensure_ascii=False,
                     ),
+                    # Preserve model-emitted ids (Mistral 9-char, etc.) —
+                    # opaque string, not validated here. Detectors whose
+                    # wire format doesn't include one simply leave this
+                    # ``None`` and the agent loop synthesises an id.
+                    id=act.get("id") if isinstance(act.get("id"), str) else None,
                 )
             )
 

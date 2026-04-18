@@ -159,6 +159,23 @@ class TestEchoedPayloadHook:
         result = agent.run("ping")
         assert result.reply == "done"
 
+    def test_fenced_echoed_payload_detected(self):
+        """Regression: SLMs often wrap the echoed payload in a markdown
+        code fence. Without fence stripping the ``starts with '{'`` check
+        misses the payload and raw JSON leaks to TTS."""
+        fenced = '```json\n{"ok": true, "result": "42", "retry_hint": null}\n```'
+        llm = ScriptedLLM([{"content": fenced, "tool_calls": None}])
+        agent = _make_agent(llm, hooks=[EchoedPayloadHook(fallback="sorry, no")])
+        result = agent.run("hi")
+        assert result.reply == "sorry, no"
+
+    def test_tool_call_fenced_echoed_payload_detected(self):
+        """Some templates wrap with ``tool_call`` fence label."""
+        fenced = '```tool_call\n{"error": "nope", "ok": false}\n```'
+        llm = ScriptedLLM([{"content": fenced, "tool_calls": None}])
+        agent = _make_agent(llm, hooks=[EchoedPayloadHook(fallback="sorry")])
+        assert agent.run("hi").reply == "sorry"
+
 
 # ---------------------------------------------------------------------------
 # SchemaRetryHook

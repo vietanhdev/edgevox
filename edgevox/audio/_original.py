@@ -48,8 +48,17 @@ SILENCE_FRAMES_THRESHOLD = 23  # ~736ms of silence (23 * 32ms)
 INTERRUPT_BASELINE_FRAMES = 10  # ~320ms to measure speaker echo level
 # Consecutive speech frames required after baseline is established
 INTERRUPT_SPEECH_FRAMES = 8  # ~256ms of sustained loud speech
-# User voice must exceed the echo baseline RMS by this factor
-INTERRUPT_RMS_RATIO = 2.5
+# User voice must exceed the reference (or no-AEC baseline) RMS by this
+# factor before we believe the cleaned mic signal is real user speech.
+# 3.0 is empirically the smallest ratio that filters out specsub-cleaned
+# residual echo on typical USB mic + laptop-speaker pairs while still
+# letting normal indoor-conversation volumes through.
+INTERRUPT_RMS_RATIO = 3.0
+# Below this reference-output RMS the speaker is effectively silent and
+# the ratio gate is bypassed — otherwise quiet TTS would block real user
+# speech from triggering. Calibrated so a TTS gap or end-of-sentence
+# tail is treated as silent.
+INTERRUPT_REF_QUIET = 0.005
 # Absolute minimum RMS to consider (prevents triggering on near-silence)
 INTERRUPT_MIN_RMS = 0.01
 
@@ -223,6 +232,11 @@ class InterruptiblePlayer:
         self._recorder: AudioRecorder | None = None  # linked recorder for echo suppression
         # Reference signal buffer for AEC (16 kHz mono float32)
         self._ref_buffer: _RefBuffer | None = None
+        # Most recent output-frame RMS — sampled in the audio callback.
+        # Read by the barge-in watcher's ``tts_energy_provider`` hook to
+        # build an echo-relative threshold, so the watcher can tell
+        # "speaker is loud" from "user is loud" without needing AEC.
+        self._last_output_rms: float = 0.0
 
         # Pending audio for the PortAudio callback. Shape (N, channels), float32.
         self._buf_lock = threading.Lock()
@@ -231,6 +245,19 @@ class InterruptiblePlayer:
     @property
     def is_playing(self) -> bool:
         return self._playing.is_set()
+
+    @property
+    def last_output_rms(self) -> float:
+        """Most recent audio-callback frame's RMS (mono, post-resample
+        device output). 0.0 when nothing is playing.
+
+        Pass ``tts_energy_provider=lambda: player.last_output_rms`` to
+        :class:`~edgevox.agents.interrupt.EnergyBargeInWatcher` so its
+        echo-suppression threshold scales with how loud the bot
+        currently is. Updated on every audio callback, so it lags
+        real output by at most one block (~10-20 ms typical).
+        """
+        return self._last_output_rms
 
     def link_recorder(self, recorder: AudioRecorder | None):
         """Link a recorder for automatic echo suppression (pause mic during playback)."""
@@ -285,10 +312,18 @@ class InterruptiblePlayer:
             if n < frames:
                 outdata[n:] = 0
 
-        if n > 0 and self._ref_buffer is not None:
+        if n > 0:
             mono = outdata[:n, 0] if outdata.ndim == 2 else outdata[:n]
-            ref_16k = _resample(np.asarray(mono, dtype=np.float32), self._stream_sr, TARGET_SAMPLE_RATE)
-            self._ref_buffer.push(ref_16k)
+            arr = np.asarray(mono, dtype=np.float32)
+            # Cheap RMS so the barge-in watcher has a live reference
+            # signal without needing the full AEC pipeline.
+            self._last_output_rms = float(np.sqrt((arr * arr).mean())) if arr.size else 0.0
+            if self._ref_buffer is not None:
+                ref_16k = _resample(arr, self._stream_sr, TARGET_SAMPLE_RATE)
+                self._ref_buffer.push(ref_16k)
+        else:
+            # Silent frame — nothing playing right now.
+            self._last_output_rms = 0.0
 
     def _get_stream(self, sample_rate: int) -> sd.OutputStream:
         """Get or create a persistent output stream."""
@@ -564,18 +599,25 @@ class AudioRecorder:
 
         threading.Thread(target=_delayed_resume, daemon=True).start()
 
-    def force_resume(self, delay: float = 0.3):
+    def force_resume(self, delay: float = 0.1):
         """Cancel echo suppression after a short delay and reset VAD.
 
         Called when the processing pipeline finishes so the mic doesn't stay
-        deaf during the full cooldown window. A brief delay (default 0.3s)
+        deaf during the full cooldown window. A brief delay (default 100 ms)
         lets residual echo from the speakers die down.
+
+        After PR-fix-2026-04-18 the recorder *also* exits suppression
+        immediately when ``_on_interrupt`` fires (so back-to-back
+        barge-ins re-arm cleanly without waiting on the consumer's
+        ``force_resume`` discipline). This call remains the post-turn
+        path for non-interrupt completions.
         """
         self._suppress_gen += 1  # invalidate any pending cooldown timers
         gen = self._suppress_gen
 
         def _resume():
-            time.sleep(delay)
+            if delay > 0:
+                time.sleep(delay)
             if self._suppress_gen != gen:
                 return
             while not self._audio_q.empty():
@@ -587,7 +629,7 @@ class AudioRecorder:
             self._interrupt_detect = False
             self._interrupt_speech_count = 0
             self._suppressed = False
-            log.debug("Mic force-resumed after %.1fs (gen=%d)", delay, gen)
+            log.debug("Mic force-resumed after %.2fs (gen=%d)", delay, gen)
 
         threading.Thread(target=_resume, daemon=True).start()
 
@@ -622,12 +664,28 @@ class AudioRecorder:
             # Interrupt detection mode: detect user speaking over bot playback.
             if self._interrupt_detect:
                 is_user_speech = False
+                rms = float(np.sqrt(np.mean(chunk**2)))
+
+                # Live reference signal: the player's most recent
+                # output-frame RMS. Available regardless of AEC mode and
+                # cheap to read (no buffer pop). Drives the energy-ratio
+                # gate that's the actual defense against self-trigger
+                # — AEC alone leaves enough residual echo to fool VAD on
+                # typical mic/speaker pairs.
+                ref_rms = self._player_ref.last_output_rms if self._player_ref is not None else 0.0
+                if ref_rms > INTERRUPT_REF_QUIET and rms < ref_rms * INTERRUPT_RMS_RATIO:
+                    # Speaker is loud and mic isn't clearly louder
+                    # — treat the frame as echo no matter what VAD
+                    # would say after AEC.
+                    self._interrupt_speech_count = 0
+                    self._interrupt_speech_buffer.clear()
+                    continue
+
                 if self._use_aec:
                     ref = self._player_ref.get_ref_frame(len(chunk)) if self._player_ref else np.zeros_like(chunk)
                     cleaned = self._aec.process(chunk, ref)
-                    is_user_speech = self._vad.is_speech(cleaned)
+                    is_user_speech = self._vad.is_speech(cleaned) and rms >= INTERRUPT_MIN_RMS
                 else:
-                    rms = float(np.sqrt(np.mean(chunk**2)))
                     if self._interrupt_baseline_count < INTERRUPT_BASELINE_FRAMES:
                         self._interrupt_baseline_count += 1
                         self._interrupt_baseline_rms += (
@@ -654,9 +712,27 @@ class AudioRecorder:
                         self._interrupt_detect = False
                         self._interrupt_speech_count = 0
                         self._on_interrupt()
+                        # Immediately exit suppression so the captured
+                        # user speech flushes into the next turn's STT
+                        # path on the very next chunk — don't wait on
+                        # the consumer's ``force_resume(delay=0.1)``.
+                        # Bumping ``_suppress_gen`` invalidates any
+                        # pending cooldown timer from the previous
+                        # play() call. Without this the second barge-in
+                        # in a session can be lost while the recorder
+                        # sits in ``_suppressed=True`` between Turn 1
+                        # and Turn 2.
+                        self._suppress_gen += 1
+                        self._suppressed = False
+                        self._vad.reset()
                 else:
                     self._interrupt_speech_count = 0
-                    self._interrupt_speech_buffer.clear()
+                    # Trim the rolling speech buffer so a single false
+                    # frame doesn't bloat memory across long bot
+                    # replies. Keep the most recent ~2 frames as a
+                    # short pre-roll for the actual barge-in.
+                    if len(self._interrupt_speech_buffer) > 2:
+                        del self._interrupt_speech_buffer[:-2]
                 continue
 
             # If suppressed (no interrupt detection either), discard.

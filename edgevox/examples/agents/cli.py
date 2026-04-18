@@ -62,6 +62,15 @@ def _lazy_subcommands() -> None:
     except ImportError:
         pass
 
+    # Chess partner — needs an engine binary on $PATH but python-chess is core.
+    try:
+        from edgevox.examples.agents.chess_partner import APP as CHESS_APP
+        from edgevox.examples.agents.chess_partner import main as chess_main
+
+        _register("chess", CHESS_APP.description, chess_main)
+    except ImportError:
+        pass
+
 
 def _print_usage() -> None:
     _lazy_subcommands()

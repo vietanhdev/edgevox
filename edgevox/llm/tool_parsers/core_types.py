@@ -11,11 +11,20 @@ from pydantic import BaseModel
 
 
 class ToolCallItem(BaseModel):
-    """Simple encapsulation of the parsed ToolCall result for easier usage in streaming contexts."""
+    """Simple encapsulation of the parsed ToolCall result for easier usage in streaming contexts.
+
+    ``id`` carries the model-emitted tool-call identifier when the wire
+    format surfaces one. Mistral's ``[TOOL_CALLS]`` JSON format requires
+    a 9-char alphanumeric id that must round-trip into the subsequent
+    tool-result message or the model won't pair the result with its
+    call. Detectors that don't emit an id leave it ``None`` and the
+    caller synthesises one.
+    """
 
     tool_index: int
     name: str | None = None
     parameters: str  # JSON string
+    id: str | None = None
 
 
 class StreamingParseResult(BaseModel):

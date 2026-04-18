@@ -44,6 +44,11 @@ _KV_PAIR_RE = re.compile(
 # prose that happens to mention a function.
 _PLAIN_CALL_RE = re.compile(r"(?P<name>[a-zA-Z_][a-zA-Z0-9_]*)\s*\((?P<body>[^()]*)\)")
 
+# Markdown code-fence block — we scrub these before the plain-call
+# regex runs so example code the model quotes back at the user doesn't
+# get reinterpreted as a tool call.
+_CODE_FENCE_RE = re.compile(r"```[^\n]*\n.*?```", re.DOTALL)
+
 # ``<think>…</think>`` blocks emitted by Qwen3 / DeepSeek-R1 / other
 # "thinking" models. Stripped from user-facing replies so TTS doesn't read
 # out the chain-of-thought, and also before inline tool-call parsing so
@@ -142,9 +147,11 @@ def parse_tool_calls_from_content(
 ) -> tuple[list[dict], str, bool]:
     """Full LLM-output parser chain used by :class:`LLMAgent._drive`.
 
-    Runs, in order: ``<think>`` stripping → preset-specific SGLang
-    detectors → chatml / bare-JSON fallback → Gemma inline / plain-call
-    fallback. Returns ``(tool_calls, cleaned_content, fallback_mode)``
+    Runs detectors on the **raw** content first (so Qwen3 / DeepSeek-R1
+    style ``<tool_call>`` blocks emitted *inside* a ``<think>`` block are
+    recovered — cf. https://github.com/ggml-org/llama.cpp/issues/20837),
+    falling back to the ``<think>``-stripped content only if no detector
+    matched. Returns ``(tool_calls, cleaned_content, fallback_mode)``
     where ``fallback_mode`` signals that the caller must feed the
     results back as a synthetic user message rather than a ``tool`` role
     (because the chat template didn't produce structured tool_calls).
@@ -155,30 +162,45 @@ def parse_tool_calls_from_content(
     same logic so every agent sees consistent behavior regardless of
     the GGUF in use.
     """
-    scrubbed = _strip_thinking(content or "")
+    raw = content or ""
+    scrubbed = _strip_thinking(raw)
     stripped = scrubbed.strip()
 
-    # 1. SGLang preset-specific detectors (Hermes, Qwen2.5, Llama3.2, …)
-    if preset_parsers:
-        from edgevox.llm.tool_parsers import parse_tool_calls as sglang_parse
+    # Try the detector chain against the raw content first so tool calls
+    # emitted inside ``<think>...</think>`` blocks (Qwen3-Instruct) are
+    # not silently lost, then fall back to the scrubbed text. When there
+    # is no ``<think>`` block the two are identical and the second pass
+    # is skipped. ``cleaned`` is always derived from ``scrubbed`` so the
+    # user-facing reply never leaks chain-of-thought.
+    candidates: list[str] = [raw]
+    if scrubbed != raw:
+        candidates.append(scrubbed)
 
-        sglang_calls = sglang_parse(scrubbed, tool_schemas, detectors=list(preset_parsers))
-        if sglang_calls:
-            return sglang_calls, "", True
+    for candidate in candidates:
+        if not candidate:
+            continue
 
-    # 2. Chatml / Llama-native bare JSON
-    chatml_calls = _parse_chatml_tool_calls(scrubbed)
-    if chatml_calls:
-        cut = scrubbed.find("<tool_call>")
-        cleaned = scrubbed[:cut].strip() if cut >= 0 else ""
-        return chatml_calls, cleaned, True
+        # 1. SGLang preset-specific detectors (Hermes, Qwen2.5, Llama3.2, …)
+        if preset_parsers:
+            from edgevox.llm.tool_parsers import parse_tool_calls as sglang_parse
 
-    # 3. Gemma inline markers / plain ``name(args)`` calls
-    gemma_calls = _parse_gemma_inline_tool_calls(scrubbed, known_tools=known_tools)
-    if gemma_calls:
-        cut = scrubbed.find("<|tool_call>")
-        cleaned = scrubbed[:cut].strip() if cut >= 0 else ""
-        return gemma_calls, cleaned, True
+            sglang_calls = sglang_parse(candidate, tool_schemas, detectors=list(preset_parsers))
+            if sglang_calls:
+                return sglang_calls, "", True
+
+        # 2. Chatml / Llama-native bare JSON
+        chatml_calls = _parse_chatml_tool_calls(candidate)
+        if chatml_calls:
+            cut = scrubbed.find("<tool_call>")
+            cleaned = scrubbed[:cut].strip() if cut >= 0 else ""
+            return chatml_calls, cleaned, True
+
+        # 3. Gemma inline markers / plain ``name(args)`` calls
+        gemma_calls = _parse_gemma_inline_tool_calls(candidate, known_tools=known_tools)
+        if gemma_calls:
+            cut = scrubbed.find("<|tool_call>")
+            cleaned = scrubbed[:cut].strip() if cut >= 0 else ""
+            return gemma_calls, cleaned, True
 
     return [], stripped, False
 
@@ -215,10 +237,12 @@ def _parse_gemma_inline_tool_calls(content: str, known_tools: set[str] | None = 
         return calls
 
     # Second pass: plain name(args) text — only when we have a tool
-    # allowlist to constrain matches.
+    # allowlist to constrain matches. Scrub fenced code blocks first so
+    # example code the model quotes doesn't get dispatched as a call.
     if not known_tools:
         return None
-    for idx, match in enumerate(_PLAIN_CALL_RE.finditer(content)):
+    scrubbed = _CODE_FENCE_RE.sub("", content)
+    for idx, match in enumerate(_PLAIN_CALL_RE.finditer(scrubbed)):
         name = match.group("name")
         if name not in known_tools:
             continue
@@ -385,6 +409,66 @@ def _resolve_model_path(model_path: str | None) -> str:
 ToolCallback = Callable[[ToolCallResult], None]
 
 
+def _autodetect_tool_call_parsers(llama: Any) -> tuple[str, ...]:
+    """Inspect a loaded ``llama_cpp.Llama`` GGUF and pick detectors by
+    grepping the chat template for known wire-format markers.
+
+    The chain is best-effort and ordered by specificity — a Qwen3
+    chatml template wins over a generic Hermes one. Returns an empty
+    tuple when no markers match (caller falls back to its legacy
+    regex chain). This is what makes the framework "work out of the
+    box" for an HF GGUF the user supplies via ``hf:repo:file`` without
+    a matching preset entry.
+    """
+    template = ""
+    try:
+        # llama-cpp-python exposes GGUF metadata via ``Llama.metadata``.
+        meta = getattr(llama, "metadata", {}) or {}
+        # Tokenizer chat template lives under several conventional keys.
+        for key in ("tokenizer.chat_template", "tokenizer.chat_template.tool_use"):
+            v = meta.get(key)
+            if isinstance(v, str) and v:
+                template += "\n" + v
+    except Exception:
+        log.debug("chat-template auto-detect: no metadata access", exc_info=True)
+        return ()
+    if not template:
+        return ()
+
+    chain: list[str] = []
+    # Order matters — most-specific marker first so we don't pick a
+    # detector that would over-eagerly match a generic ``<tool_call>``.
+    if "[TOOL_CALLS]" in template:
+        chain.append("mistral")
+    if "<|python_tag|>" in template:
+        chain.append("llama32")
+    if "<tool_call>" in template:
+        # Qwen2.5 / Qwen3 use the strict newline-delimited variant;
+        # Hermes accepts the same outer markers without strict layout.
+        chain.append("qwen25")
+        chain.append("hermes")
+    return tuple(chain)
+
+
+def _make_stopping_criteria(stop_event: threading.Event) -> Any:
+    """Build a llama-cpp ``StoppingCriteriaList`` that aborts sampling
+    when ``stop_event`` is set.
+
+    llama-cpp-python evaluates each criterion after every sampled token
+    with signature ``(input_ids, logits) -> bool``. Returning ``True``
+    halts generation. This is the enforcement mechanism behind
+    :class:`~edgevox.agents.interrupt.InterruptController` — without it,
+    barge-in is a cosmetic signal and the LLM keeps burning tokens
+    until ``max_tokens`` runs out.
+    """
+    from llama_cpp import StoppingCriteriaList
+
+    def _check(_input_ids: Any, _logits: Any) -> bool:
+        return stop_event.is_set()
+
+    return StoppingCriteriaList([_check])
+
+
 class LLM:
     """llama-cpp-python chat wrapper with optional tool-calling support."""
 
@@ -428,7 +512,17 @@ class LLM:
         self._on_tool_call = on_tool_call
         # Tool-call parser chain — preset-specific SGLang detectors are tried
         # in order before the hand-rolled chatml / Gemma regex fallbacks.
+        # When the preset doesn't declare any (or for raw HF/local paths
+        # with no preset), inspect the GGUF chat template and pick a
+        # detector chain by sniffing for known wire-format markers. This
+        # is best-effort — a wrong guess is no worse than the existing
+        # legacy regex fallback.
         self._tool_call_parsers: tuple[str, ...] = preset.tool_call_parsers if preset else ()
+        if not self._tool_call_parsers:
+            sniffed = _autodetect_tool_call_parsers(self._llm)
+            if sniffed:
+                log.info("Auto-detected tool-call parsers from chat template: %s", sniffed)
+                self._tool_call_parsers = sniffed
         # Inference lock — llama_cpp.Llama is NOT thread-safe. Concurrent
         # ``create_chat_completion`` calls from parallel agents must
         # serialize here. Everything else in the agent framework
@@ -499,6 +593,8 @@ class LLM:
         max_tokens: int = 256,
         temperature: float = 0.7,
         stream: bool = False,
+        stop_event: threading.Event | None = None,
+        grammar: Any = None,
     ) -> Any:
         """Thread-safe completion entry point for the agent framework.
 
@@ -507,6 +603,21 @@ class LLM:
         ``LLMAgent`` turns stay isolated. Serializes access to the
         underlying ``llama_cpp.Llama`` via :attr:`_inference_lock`
         because llama-cpp is not thread-safe.
+
+        ``stop_event`` — if set, installs a ``stopping_criteria`` that
+        aborts sampling when the event fires. Callers pass
+        ``ctx.interrupt.cancel_token`` so a user barge-in actually
+        interrupts the generator mid-token instead of waiting for
+        ``max_tokens`` to drain. ``llama-cpp-python`` evaluates stopping
+        criteria once per token, so cancellation latency is a single
+        decode step (~15-40 ms for a 3B SLM).
+
+        ``grammar`` — optional ``llama_cpp.LlamaGrammar`` (or anything
+        the backend accepts as the ``grammar=`` kwarg). When set, the
+        sampler masks invalid next tokens at every decode step so the
+        model can only emit text the grammar permits. Build via
+        :mod:`edgevox.llm.grammars`. The agent loop passes a tool-call
+        grammar when ``tool_choice`` requires structured output.
         """
         kwargs: dict = {
             "messages": messages,
@@ -517,6 +628,10 @@ class LLM:
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = tool_choice or "auto"
+        if stop_event is not None:
+            kwargs["stopping_criteria"] = _make_stopping_criteria(stop_event)
+        if grammar is not None:
+            kwargs["grammar"] = grammar
         with self._inference_lock:
             return self._llm.create_chat_completion(**kwargs)
 
@@ -639,3 +754,24 @@ class LLM:
     def reset(self):
         """Clear conversation history."""
         self._history = self._history[:1]
+
+    def count_tokens(self, text: str) -> int:
+        """Exact token count under the loaded GGUF's tokenizer.
+
+        Used by the Compactor + TokenBudgetHook so context-window
+        decisions don't rely on ``chars // 4`` heuristics — that
+        heuristic under-counts code by ~15-25% and badly mis-counts
+        CJK/Vietnamese/Thai (the agent framework supports all three).
+        Returns 0 on the empty string; serialises access to the shared
+        llama-cpp handle via :attr:`_inference_lock` because even
+        tokenisation is not thread-safe.
+        """
+        if not text:
+            return 0
+        try:
+            with self._inference_lock:
+                toks = self._llm.tokenize(text.encode("utf-8"), add_bos=False, special=False)
+            return len(toks)
+        except Exception:
+            log.debug("count_tokens failed; falling back to heuristic", exc_info=True)
+            return len(text) // 4 + 1

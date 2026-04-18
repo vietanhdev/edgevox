@@ -53,6 +53,26 @@ class Fact:
 
     Facts are key/value pairs with optional ``scope`` (e.g. ``"user"``,
     ``"env:kitchen"``) so one store can back multiple agents cleanly.
+
+    **Bi-temporal schema** (Zep / Graphiti pattern). Every fact carries
+    two time axes:
+
+    - ``valid_from`` / ``valid_to`` — the *world-state* interval the
+      fact described as true. ``valid_to=None`` means "still true".
+    - ``invalidated_at`` — the *system* timestamp at which we learned
+      the fact stopped being true. Always ``None`` while the fact is
+      still active.
+
+    Facts are *append-only*: when ``add_fact`` overwrites a key, the
+    prior fact gets ``valid_to`` and ``invalidated_at`` set to ``now``
+    and the new fact is appended with ``supersedes`` pointing at the
+    old one's ``id``. ``facts_as_of(t)`` then answers "what did I
+    believe at time ``t``?" — useful for robotics worldmodel queries
+    ("the mug *was* on the counter at 14:02 but is in drawer 2 now").
+
+    Old JSON files predating this schema (no ``id`` / ``valid_*``
+    fields) load cleanly: missing fields fall back to ``id="legacy_…"``,
+    ``valid_from=updated_at``, ``valid_to=None``.
     """
 
     key: str
@@ -60,6 +80,26 @@ class Fact:
     scope: str = "global"
     updated_at: float = field(default_factory=time.time)
     source: str = ""  # which agent or event created it
+    # Bi-temporal extensions ------------------------------------------
+    id: str = ""
+    valid_from: float = 0.0
+    valid_to: float | None = None
+    invalidated_at: float | None = None
+    supersedes: str | None = None
+
+    def __post_init__(self) -> None:
+        # Defaults only kick in when the caller (or the JSON loader)
+        # didn't provide a value — keeps the dataclass shape stable
+        # without forcing every test to set every field.
+        if not self.id:
+            self.id = f"f_{uuid.uuid4().hex[:10]}"
+        if not self.valid_from:
+            self.valid_from = self.updated_at or time.time()
+
+    @property
+    def is_active(self) -> bool:
+        """True iff this fact is still believed to be the truth."""
+        return self.valid_to is None and self.invalidated_at is None
 
 
 @dataclass
@@ -87,6 +127,11 @@ class Preference:
     key: str
     value: str
     updated_at: float = field(default_factory=time.time)
+
+
+# Set of accepted ``Fact`` field names — used by :class:`JSONMemoryStore`
+# to drop legacy or extension-introduced keys instead of raising.
+_FACT_FIELDS = frozenset(f.name for f in __import__("dataclasses").fields(Fact))
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +232,11 @@ class JSONMemoryStore:
     def __init__(self, path: str | Path, *, autoload: bool = True) -> None:
         self.path = Path(path)
         self._lock = threading.RLock()
-        self._facts: dict[tuple[str, str], Fact] = {}  # (scope, key) → Fact
+        # Bi-temporal storage: every fact ever observed lives here, in
+        # insertion order. ``_active_index`` keeps O(1) lookup of the
+        # current believed-true value per ``(scope, key)``.
+        self._facts: list[Fact] = []
+        self._active_index: dict[tuple[str, str], int] = {}
         self._preferences: dict[str, Preference] = {}
         self._episodes: list[Episode] = []
         self._dirty = False
@@ -207,11 +256,19 @@ class JSONMemoryStore:
             return
         with self._lock:
             for raw in data.get("facts", []):
+                # Tolerate legacy schemas: drop fields the current Fact
+                # dataclass doesn't recognise rather than failing the
+                # whole load.
+                fields = {k: v for k, v in raw.items() if k in _FACT_FIELDS}
                 try:
-                    f = Fact(**raw)
+                    f = Fact(**fields)
                 except TypeError:
                     continue
-                self._facts[(f.scope, f.key)] = f
+                self._facts.append(f)
+                if f.is_active:
+                    # Last-active wins; pre-bi-temporal files only had
+                    # one fact per (scope, key) so this is a no-op there.
+                    self._active_index[(f.scope, f.key)] = len(self._facts) - 1
             for raw in data.get("preferences", []):
                 try:
                     p = Preference(**raw)
@@ -231,7 +288,7 @@ class JSONMemoryStore:
                 return
             self.path.parent.mkdir(parents=True, exist_ok=True)
             data = {
-                "facts": [asdict(f) for f in self._facts.values()],
+                "facts": [asdict(f) for f in self._facts],
                 "preferences": [asdict(p) for p in self._preferences.values()],
                 "episodes": [asdict(e) for e in self._episodes[-self._max_episodes :]],
             }
@@ -257,27 +314,109 @@ class JSONMemoryStore:
         scope: str = "global",
         source: str = "",
     ) -> None:
+        """Append-only fact write.
+
+        If an active fact already exists for ``(scope, key)`` and its
+        value differs, the prior fact is invalidated (``valid_to`` and
+        ``invalidated_at`` set to ``now``) and a new fact is appended
+        with ``supersedes`` pointing at the prior id. Identical-value
+        re-writes are no-ops so callers can safely re-publish.
+        """
         with self._lock:
-            self._facts[(scope, key)] = Fact(key=key, value=value, scope=scope, source=source)
+            now = time.time()
+            prior_idx = self._active_index.get((scope, key))
+            prior: Fact | None = self._facts[prior_idx] if prior_idx is not None else None
+            if prior is not None and prior.value == value:
+                # No-op refresh: bump ``updated_at`` so callers can tell
+                # we re-affirmed the fact, but keep the id and lineage.
+                prior.updated_at = now
+                self._mark_dirty()
+                return
+            if prior is not None:
+                prior.valid_to = now
+                prior.invalidated_at = now
+            new_fact = Fact(
+                key=key,
+                value=value,
+                scope=scope,
+                source=source,
+                updated_at=now,
+                valid_from=now,
+                supersedes=prior.id if prior is not None else None,
+            )
+            self._facts.append(new_fact)
+            self._active_index[(scope, key)] = len(self._facts) - 1
             self._mark_dirty()
 
     def get_fact(self, key: str, *, scope: str = "global") -> str | None:
+        """Return the *currently active* value for ``(scope, key)``."""
         with self._lock:
-            f = self._facts.get((scope, key))
-            return f.value if f else None
+            idx = self._active_index.get((scope, key))
+            if idx is None:
+                return None
+            return self._facts[idx].value
 
     def facts(self, *, scope: str | None = None) -> list[Fact]:
+        """Return active (currently-believed) facts, optionally scoped.
+
+        Use :meth:`fact_history` to see superseded values, or
+        :meth:`facts_as_of` for time-travel queries.
+        """
         with self._lock:
+            active = (self._facts[i] for i in self._active_index.values())
             if scope is None:
-                return list(self._facts.values())
-            return [f for (s, _k), f in self._facts.items() if s == scope]
+                return list(active)
+            return [f for f in active if f.scope == scope]
+
+    def fact_history(self, key: str, *, scope: str = "global") -> list[Fact]:
+        """All facts ever written for ``(scope, key)``, oldest first.
+        Includes the currently-active one (last entry) and all
+        superseded predecessors.
+        """
+        with self._lock:
+            return [f for f in self._facts if f.scope == scope and f.key == key]
+
+    def facts_as_of(self, t: float, *, scope: str | None = None) -> list[Fact]:
+        """Return what the agent believed to be true at world-time ``t``.
+
+        Bi-temporal query: a fact is "believed at ``t``" iff its
+        ``valid_from <= t`` and (``valid_to is None`` or ``valid_to >
+        t``). For each ``(scope, key)`` we return the single fact that
+        was active at ``t``, picking the most-recent one when multiple
+        rewrites happened in the same instant.
+        """
+        with self._lock:
+            picked: dict[tuple[str, str], Fact] = {}
+            for f in self._facts:
+                if scope is not None and f.scope != scope:
+                    continue
+                if f.valid_from > t:
+                    continue
+                if f.valid_to is not None and f.valid_to <= t:
+                    continue
+                key = (f.scope, f.key)
+                # Later-appended wins on ties — matches add_fact's
+                # invalidate-then-append ordering.
+                picked[key] = f
+            return list(picked.values())
 
     def forget_fact(self, key: str, *, scope: str = "global") -> bool:
+        """Mark the active fact for ``(scope, key)`` as no-longer-valid.
+
+        Unlike a true delete, the fact remains in :meth:`fact_history`
+        and is still returned by :meth:`facts_as_of` for any ``t`` in
+        its valid interval. Returns ``True`` if a fact was active to
+        forget, ``False`` otherwise.
+        """
         with self._lock:
-            popped = self._facts.pop((scope, key), None)
-            if popped is not None:
-                self._mark_dirty()
-            return popped is not None
+            idx = self._active_index.pop((scope, key), None)
+            if idx is None:
+                return False
+            now = time.time()
+            self._facts[idx].valid_to = now
+            self._facts[idx].invalidated_at = now
+            self._mark_dirty()
+            return True
 
     # ----- preferences -----
 
@@ -328,9 +467,13 @@ class JSONMemoryStore:
                 for p in list(self._preferences.values())[:max_facts]:
                     lines.append(f"- {p.key}: {p.value}")
 
-            if self._facts:
+            # Render only currently-active facts. ``self._facts`` is the
+            # full append-only history; the active subset lives at the
+            # indices in ``_active_index``.
+            active_facts = [self._facts[i] for i in self._active_index.values()]
+            if active_facts:
                 lines.append("## Known facts")
-                for rendered, f in enumerate(self._facts.values()):
+                for rendered, f in enumerate(active_facts):
                     if rendered >= max_facts:
                         break
                     scope_tag = "" if f.scope == "global" else f" [{f.scope}]"
@@ -406,6 +549,112 @@ class JSONSessionStore:
         return [p.stem for p in self.base.glob("*.json")]
 
 
+class SQLiteSessionStore:
+    """SQLite-backed :class:`SessionStore` using stdlib ``sqlite3``.
+
+    Why SQLite over JSON-per-file:
+
+    * **Atomic writes.** ``UPDATE`` is transactional; the JSON store
+      uses ``tmp.write + replace`` which is atomic at the filesystem
+      layer but doesn't guard against partial reads on concurrent
+      access.
+    * **Crash-safe.** WAL journal mode survives mid-write SIGKILL
+      without corrupting the database.
+    * **Queryable.** ``list_ids`` is O(log n) instead of a directory
+      scan; future ``audit_log`` tables (PR-13+) can join cleanly.
+    * **Single file.** One file under the data dir for many sessions —
+      easier to back up + ship across machines.
+
+    Schema (created on first write):
+
+    .. code-block:: sql
+
+        CREATE TABLE sessions (
+          session_id TEXT PRIMARY KEY,
+          messages TEXT NOT NULL,            -- JSON array
+          state TEXT NOT NULL,               -- JSON object
+          updated_at REAL NOT NULL
+        );
+
+    Backwards-compatible drop-in for :class:`JSONSessionStore` — same
+    Protocol surface, callers swap implementations without touching
+    hooks. Pairs with :class:`PersistSessionHook`.
+    """
+
+    _SCHEMA = """
+    CREATE TABLE IF NOT EXISTS sessions (
+        session_id TEXT PRIMARY KEY,
+        messages TEXT NOT NULL,
+        state TEXT NOT NULL,
+        updated_at REAL NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS sessions_updated_idx ON sessions(updated_at DESC);
+    """
+
+    def __init__(self, path: str | Path) -> None:
+        import sqlite3
+
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        # ``check_same_thread=False`` + a lock = thread-safe shared
+        # connection. We do per-call short transactions so contention
+        # is minimal even with multiple agents.
+        self._lock = threading.RLock()
+        self._conn = sqlite3.connect(str(self.path), check_same_thread=False)
+        with self._lock:
+            # WAL = better concurrency + crash safety than rollback journal.
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA synchronous=NORMAL")
+            self._conn.executescript(self._SCHEMA)
+            self._conn.commit()
+
+    def save(self, session_id: str, session: Session) -> None:
+        payload_messages = json.dumps(session.messages, default=str)
+        payload_state = json.dumps(_jsonable(session.state), default=str)
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO sessions (session_id, messages, state, updated_at) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(session_id) DO UPDATE SET "
+                "messages=excluded.messages, state=excluded.state, updated_at=excluded.updated_at",
+                (session_id, payload_messages, payload_state, time.time()),
+            )
+            self._conn.commit()
+
+    def load(self, session_id: str) -> Session | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT messages, state FROM sessions WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            messages = json.loads(row[0])
+            state = json.loads(row[1])
+        except json.JSONDecodeError:
+            log.exception("Corrupt SQLite session row for %s", session_id)
+            return None
+        return Session(messages=list(messages), state=dict(state))
+
+    def delete(self, session_id: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def list_ids(self) -> list[str]:
+        with self._lock:
+            rows = self._conn.execute("SELECT session_id FROM sessions ORDER BY updated_at DESC").fetchall()
+        return [r[0] for r in rows]
+
+    def close(self) -> None:
+        """Close the underlying SQLite connection. Optional — the
+        connection is closed automatically on garbage collection."""
+        with self._lock:
+            self._conn.close()
+
+
 def _jsonable(obj: Any) -> Any:
     """Best-effort coerce to a JSON-safe shape (private-state may hold
     threading primitives or dataclasses that json.dumps rejects even
@@ -424,15 +673,33 @@ def _jsonable(obj: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def estimate_tokens(messages: Iterable[dict]) -> int:
-    """Rough token estimate (chars / 4). Good enough for threshold
-    checks; precise counting requires a tokenizer."""
+def estimate_tokens(messages: Iterable[dict], llm: LLM | None = None) -> int:
+    """Token estimate used for context-window decisions.
+
+    When ``llm`` is supplied, each message's ``content`` is tokenised
+    exactly via :meth:`LLM.count_tokens` (uses the loaded GGUF's
+    tokenizer). Otherwise a ``chars // 4`` heuristic is used — good
+    enough for rough thresholds but known-wrong for code (under-counts
+    ~15-25%) and CJK/Vietnamese/Thai (under-counts heavily). Threading
+    the real tokenizer through every site that calls this function is
+    what keeps the Compactor + TokenBudgetHook from either triggering
+    too early (heuristic over-counts ASCII) or too late (heuristic
+    under-counts multilingual).
+    """
     total = 0
     for m in messages:
         c = m.get("content") or ""
-        if isinstance(c, str):
-            total += len(c) // 4 + 4
-        total += 4  # role + scaffolding
+        if not isinstance(c, str):
+            total += 4
+            continue
+        if llm is not None:
+            try:
+                total += llm.count_tokens(c) + 4
+                continue
+            except Exception:
+                # Fall through to the heuristic on any tokenizer error.
+                pass
+        total += len(c) // 4 + 4
     return total
 
 
@@ -467,10 +734,15 @@ class Compactor:
     # Maximum tokens for the summary itself.
     summary_max_tokens: int = 300
 
-    def should_compact(self, messages: list[dict]) -> bool:
+    def should_compact(self, messages: list[dict], llm: LLM | None = None) -> bool:
+        """Return True when compaction is warranted.
+
+        Uses the supplied LLM's tokenizer when available so the
+        threshold is counted in real tokens rather than ``chars // 4``.
+        """
         if len(messages) < self.keep_last_turns + 2:
             return False
-        return estimate_tokens(messages) >= self.trigger_tokens
+        return estimate_tokens(messages, llm) >= self.trigger_tokens
 
     def compact(self, messages: list[dict], llm: LLM | None) -> list[dict]:
         """Return a compacted copy of ``messages``.
@@ -478,7 +750,7 @@ class Compactor:
         If ``llm`` is None (test / offline path), falls back to a
         deterministic truncation that keeps system + last N turns.
         """
-        if not self.should_compact(messages):
+        if not self.should_compact(messages, llm):
             return list(messages)
 
         system = messages[0] if messages and messages[0].get("role") == "system" else None
@@ -558,11 +830,23 @@ class NotesFile:
     structured observations ("user prefers French coffee; kettle is in
     drawer 2") and a hook injects the most recent section into the
     system prompt on ``on_run_start``.
+
+    The file is soft-bounded by ``max_size_chars`` (default 64 KiB).
+    When :meth:`append` would take it past the bound, the file is
+    rewritten keeping the newest ``max_size_chars`` characters plus a
+    single ``(earlier notes truncated)`` marker line. A long-running
+    voice session that logs a note per turn can otherwise grow notes
+    without bound — this keeps the on-disk + in-prompt size stable.
     """
 
-    def __init__(self, path: str | Path) -> None:
+    # Default: 64 KiB holds ~12k-16k tokens of notes, well beyond the
+    # typical ``NotesInjectorHook.max_chars = 1500`` prompt budget.
+    DEFAULT_MAX_SIZE_CHARS = 64 * 1024
+
+    def __init__(self, path: str | Path, *, max_size_chars: int | None = None) -> None:
         self.path = Path(path)
         self._lock = threading.RLock()
+        self.max_size_chars = max_size_chars if max_size_chars is not None else self.DEFAULT_MAX_SIZE_CHARS
 
     def read(self) -> str:
         with self._lock:
@@ -577,6 +861,33 @@ class NotesFile:
                 if heading:
                     f.write(f"\n## {heading} ({time.strftime('%Y-%m-%d %H:%M')})\n")
                 f.write(text.rstrip() + "\n")
+            self._prune_if_oversized()
+
+    def _prune_if_oversized(self) -> None:
+        """Rewrite the file keeping only the newest ``max_size_chars``.
+
+        Called under ``self._lock`` after every append. No-op when the
+        file is within budget or when ``max_size_chars`` is ``0``.
+        """
+        if self.max_size_chars <= 0:
+            return
+        try:
+            size = self.path.stat().st_size
+        except FileNotFoundError:
+            return
+        # Cheap file-size test first — avoids re-reading the file until
+        # we actually need to prune.
+        if size <= self.max_size_chars:
+            return
+        content = self.path.read_text(encoding="utf-8")
+        if len(content) <= self.max_size_chars:
+            return
+        keep = content[-self.max_size_chars :]
+        # Align to a line boundary so we don't split a heading.
+        nl = keep.find("\n")
+        if 0 <= nl < len(keep) - 1:
+            keep = keep[nl + 1 :]
+        self.path.write_text(f"(earlier notes truncated)\n{keep}", encoding="utf-8")
 
     def clear(self) -> None:
         with self._lock:
@@ -603,6 +914,7 @@ __all__ = [
     "MemoryStore",
     "NotesFile",
     "Preference",
+    "SQLiteSessionStore",
     "SessionStore",
     "default_memory_dir",
     "estimate_tokens",

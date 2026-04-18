@@ -68,14 +68,23 @@ def register_detector(name: str, detector: type[BaseFormatDetector]) -> None:
 
 
 def _to_openai_tool_call(item: ToolCallItem, idx: int) -> dict:
-    """Convert a vendored :class:`ToolCallItem` to an OpenAI-shaped dict."""
+    """Convert a vendored :class:`ToolCallItem` to an OpenAI-shaped dict.
+
+    Preserves the model-emitted ``id`` when a detector populated one
+    (Mistral's 9-char id, etc.), otherwise synthesises ``"<name>_<idx>"``
+    so the tool-result pairing stays deterministic. The agent loop
+    threads this id through to the subsequent ``role="tool"`` message
+    verbatim — overwriting it breaks Mistral's tool-call → tool-result
+    matching.
+    """
     # ``item.parameters`` is already a JSON string in the vendored format.
     try:
         parsed = json.loads(item.parameters) if item.parameters else {}
     except json.JSONDecodeError:
         parsed = {}
+    call_id = item.id or f"{item.name or 'call'}_{idx}"
     return {
-        "id": f"{item.name or 'call'}_{idx}",
+        "id": call_id,
         "type": "function",
         "function": {
             "name": item.name or "",

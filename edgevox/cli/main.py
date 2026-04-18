@@ -71,7 +71,7 @@ class VoiceBot:
         tts_backend: str | None = None,
         voice: str | None = None,
         language: str = "en",
-        aec_backend: str = "none",
+        aec_backend: str = "specsub",
         tools: ToolsArg = None,
         on_tool_call: ToolCallback | None = None,
         agent=None,
@@ -325,9 +325,12 @@ def main():
     parser.add_argument(
         "--aec",
         type=str,
-        default="none",
+        default="specsub",
         choices=AEC_CHOICES,
-        help="Echo cancellation backend for voice interrupt: none, nlms, specsub, dtln (default: none)",
+        help=(
+            "Echo cancellation backend for voice interrupt: none, nlms, specsub, dtln "
+            "(default: specsub — pure-numpy, no extra deps, robust against TTS leak)"
+        ),
     )
 
     args = parser.parse_args()

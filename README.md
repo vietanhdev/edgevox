@@ -50,8 +50,12 @@ A MuJoCo viewer opens with a Franka Panda arm above a table with three colored c
 
 - **`@tool` / `@skill` decorators** — auto-derive JSON schemas from Python signatures + docstrings
 - **`LLMAgent`** with per-run history isolation, reentrant, thread-safe
-- **Workflows**: `Sequence`, `Fallback`, `Loop`, `Parallel`, `Router`, `Retry`, `Timeout` — behavior-tree-shaped, nestable
-- **Handoffs** — OpenAI-SDK-style "agent-as-return-value" (2 LLM hops per delegation vs smolagents' 3)
+- **Workflows**: `Sequence`, `Fallback`, `Loop`, `Parallel`, `Router`, `Supervisor`, `Orchestrator`, `Retry`, `Timeout` — behavior-tree-shaped + multi-agent patterns, nestable
+- **Handoffs** — OpenAI-SDK-style "agent-as-return-value" (2 LLM hops per delegation vs smolagents' 3); LangGraph-style `state_update` writes blackboard keys before the target runs
+- **Grammar-constrained tool calling** — auto-built GBNF from `ToolRegistry` schemas; `tool_choice_policy="required_first_hop"` is the canonical SLM loop-break (no malformed JSON, no fabricated tool names)
+- **Hooks** — 6 fire points (`on_run_start`, `before_llm`, `after_llm`, `before_tool`, `after_tool`, `on_run_end`), priority-ordered (Safety 100 → Observability 0), 12 built-ins ship + 3 SLM hardening hooks
+- **Memory** — bi-temporal `Fact` schema (`facts_as_of(t)`), `JSONMemoryStore` + `SQLiteSessionStore`, `Compactor` with tokenizer-exact counts, file-based `NotesFile`
+- **Artifacts** — versioned, indexed, exposable as LLM tools via `make_artifact_tools(store)`
 - **Cancellable skills** — `GoalHandle` lifecycle with `poll` / `cancel` / `feedback`, mid-flight preempt in ~200 ms
 - **`SafetyMonitor`** — stop-word preempt before the LLM is consulted
 - **`EventBus`** — thread-safe pub/sub for observability, metrics, main-thread scheduling
@@ -63,7 +67,7 @@ A MuJoCo viewer opens with a Franka Panda arm above a table with three colored c
 
 - **Sub-second streaming** — 0.8 s first-audio on RTX 3080 (VAD 32 ms + faster-whisper + Gemma 4 E2B + Kokoro)
 - **15 languages** with 56 voices across 4 TTS backends
-- **Voice interrupt** — speak over the bot to cut it off
+- **Robust voice interrupt** — speak over the bot to cut it off; `specsub` AEC on by default + energy-ratio gate so the bot doesn't hear itself; LLM generation aborted via llama-cpp `stopping_criteria` (≤40 ms cancellation latency); back-to-back barge-ins re-arm cleanly
 - **4 wake words** — "Hey Jarvis", "Alexa", "Hey Mycroft", "Okay Nabu"
 - **4 interfaces** — TUI (Textual), Web UI (FastAPI + Vue), simple CLI, text mode
 - **ROS2 bridge** — pub/sub topics with proper QoS for multi-robot setups
@@ -273,6 +277,23 @@ Full architecture writeup: [`docs/plan.md`](docs/plan.md) — grounded in cross-
 - **[TUI commands](docs/guide/commands.md)**
 - **[CLI reference](docs/reference/cli.md)**
 - **[ROS2 bridge reference](docs/reference/config.md)**
+
+### Harness architecture
+
+In-depth docs for each subsystem of the agent harness:
+
+- **[Agent loop](docs/guide/agent-loop.md)** — six-fire-point loop, parallel dispatch, handoff short-circuit, cancel-token plumbing
+- **[Hooks](docs/guide/hooks.md)** — fire points, payloads, priority scale, built-ins, SLM hardening
+- **[Memory](docs/guide/memory.md)** — `MemoryStore` / `SessionStore` / `Compactor` / `NotesFile`, bi-temporal facts
+- **[Multi-agent](docs/guide/multiagent.md)** — Blackboard, Supervisor, Orchestrator, BackgroundAgent (OTP restart policies)
+- **[Interrupt & barge-in](docs/guide/interrupt.md)** — `cancel_token` to llama-cpp `stopping_criteria`, AEC defaults, repeatable interrupts
+- **[Tool calling](docs/guide/tool-calling.md)** — parser chain, GBNF grammar-constrained decoding, `tool_choice_policy`
+
+Architecture decisions:
+
+- **[ADR-001](docs/adr/001-cancel-token-plumbing.md)** — Cancel-token plumbing for barge-in
+- **[ADR-002](docs/adr/002-typed-ctx-hook-state.md)** — Typed `AgentContext` fields + hook-owned state
+- **[ADR-003](docs/adr/003-grammar-constrained-decoding.md)** — GBNF grammar-constrained tool decoding
 
 Full site: [EdgeVox Docs](https://edgevox-ai.github.io/edgevox/) (VitePress). Run locally:
 

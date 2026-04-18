@@ -63,6 +63,7 @@ class ScriptedLLM:
         max_tokens: int = 256,
         temperature: float = 0.7,
         stream: bool = False,
+        stop_event: threading.Event | None = None,
     ) -> Any:
         self.calls.append(
             {
@@ -72,6 +73,7 @@ class ScriptedLLM:
                 "max_tokens": max_tokens,
                 "temperature": temperature,
                 "stream": stream,
+                "stop_event": stop_event,
             }
         )
         if not self._script:

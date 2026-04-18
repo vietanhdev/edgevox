@@ -863,10 +863,27 @@ class EdgeVoxApp(App):
         session_timeout: float = 30.0,
         ros2: bool = False,
         ros2_namespace: str = "/edgevox",
-        aec_backend: str = "none",
+        aec_backend: str = "specsub",
         tools=None,
         on_tool_call=None,
         banner_title: str | None = None,
+        # ----- Agent-aware extensions (parity with VoiceBot) -----
+        # ``agent`` — a pre-built :class:`~edgevox.agents.Agent` (or any
+        # workflow combinator). When set, the pipeline routes through
+        # :class:`AgentProcessor` so skills, ``ctx`` injection, and
+        # multi-agent handoffs all work in TUI mode.
+        # ``skills`` — list of ``@skill``-decorated callables. We
+        # synthesize an :class:`LLMAgent` around them and the loaded
+        # ``LLM``, mirroring :class:`AgentApp.__post_init__`.
+        # ``deps`` — passed through as ``AgentContext.deps``.
+        # ``on_event`` — observability callback receiving every
+        # :class:`AgentEvent` mid-turn (tool_call, skill_goal,
+        # handoff, safety_preempt). Used by AgentApp's TUI runner to
+        # render live tool/skill activity in the chat panel.
+        agent=None,
+        skills=None,
+        deps=None,
+        on_event=None,
     ):
         super().__init__()
         self._stt_model = stt_model
@@ -882,6 +899,12 @@ class EdgeVoxApp(App):
         self._aec_backend = aec_backend
         self._tools = tools
         self._on_tool_call = on_tool_call
+        # Agent-aware fields. ``_agent`` is bound to an LLM at load time
+        # so the pipeline can route through ``AgentProcessor``.
+        self._agent = agent
+        self._skills = skills
+        self._deps = deps
+        self._on_event = on_event
         if banner_title:
             type(self).SUB_TITLE = banner_title
 
@@ -914,6 +937,111 @@ class EdgeVoxApp(App):
         self._interrupted = threading.Event()
         self._chat_log: list[tuple[str, str, str]] = []  # (timestamp, speaker, text)
 
+    def _build_tui_event_sink(self, chat):
+        """Build the ``on_event`` callback the AgentProcessor fans out
+        to. Renders tool calls, skill goals, handoffs, and safety
+        preempts as inline lines in the chat panel; chains to any
+        caller-supplied ``self._on_event`` so callers can also react.
+
+        Runs on a worker thread (the AgentProcessor's pipeline thread),
+        so every Textual write goes via ``call_from_thread``.
+        """
+        user_cb = self._on_event
+
+        def _emit(event) -> None:
+            if user_cb is not None:
+                with contextlib.suppress(Exception):
+                    user_cb(event)
+            kind = getattr(event, "kind", None)
+            payload = getattr(event, "payload", None)
+            try:
+                if kind == "tool_call":
+                    r = payload
+                    if getattr(r, "ok", False):
+                        line = Text.assemble(
+                            ("   \u2937 ", "bold #f4a259"),
+                            (f"{r.name}", "bold #f4a259"),
+                            (f"({r.arguments}) ", "#f4a259"),
+                            ("\u2192 ", "dim"),
+                            (f"{r.result}", "#c9d1d9"),
+                        )
+                    else:
+                        line = Text.assemble(
+                            ("   \u2937 ", "bold red"),
+                            (f"{r.name} failed: ", "bold red"),
+                            (f"{getattr(r, 'error', '?')}", "#ff8a8a"),
+                        )
+                elif kind == "skill_goal":
+                    line = Text.assemble(
+                        ("   \u21d2 ", "bold #c084fc"),
+                        (f"skill {payload['skill']} started", "#c084fc"),
+                    )
+                elif kind == "skill_cancelled":
+                    line = Text.assemble(
+                        ("   \u21d2 ", "bold red"),
+                        (f"skill {payload.get('skill', '?')} cancelled", "red"),
+                    )
+                elif kind == "handoff":
+                    line = Text.assemble(
+                        ("   \u2192 ", "bold magenta"),
+                        (
+                            f"handoff {event.agent_name} \u2192 {payload['target']}",
+                            "magenta",
+                        ),
+                    )
+                elif kind == "safety_preempt":
+                    line = Text.assemble(
+                        ("   \u26a0 ", "bold red"),
+                        (f"safety preempt: {payload}", "red"),
+                    )
+                elif kind == "hook_end_turn":
+                    line = Text(
+                        f"   \u00b7 hook ended turn at {payload.get('point', '?')}",
+                        style="dim yellow",
+                    )
+                else:
+                    return
+                self.call_from_thread(chat.write, line)
+            except Exception:
+                # The sink must never break the agent loop.
+                log.exception("TUI event sink failed for %s", kind)
+
+        return _emit
+
+    def _build_agent_for_tui(self, chat) -> None:
+        """Bind / synthesize the agent that drives the pipeline in
+        agent mode.
+
+        Three sources, in priority order:
+
+        1. ``self._agent`` — caller-supplied :class:`~edgevox.agents.Agent`.
+           We walk it (workflows, handoff trees) and call ``bind_llm``
+           on every leaf so all subagents share the loaded GGUF.
+        2. ``self._skills`` (with optional ``self._tools``) — synthesize
+           a single :class:`~edgevox.agents.LLMAgent` over the supplied
+           skills + tools so users can run skills without authoring an
+           agent class.
+        3. Fall through (caller-supplied agent only) — leave
+           ``self._agent`` untouched but still bind the LLM.
+        """
+        from edgevox.agents import LLMAgent
+        from edgevox.agents.workflow import _bind_llm_recursive
+
+        if self._agent is None and self._skills:
+            self._agent = LLMAgent(
+                name="tui-agent",
+                description="Agent assembled from TUI skills/tools.",
+                instructions="You are Vox, an AI assistant built with EdgeVox.",
+                tools=self._tools or (),
+                skills=self._skills,
+            )
+        if self._agent is not None:
+            _bind_llm_recursive(self._agent, self._llm)
+            self.call_from_thread(
+                chat.write,
+                Text(f"        Agent: {self._agent.name}", style="#8b949e"),
+            )
+
     def _make_chat_tool_hook(self, chat):
         """Build an ``on_tool_call`` callback that routes tool-call results
         into the chat RichLog so users can see what their agent is doing
@@ -942,6 +1070,33 @@ class EdgeVoxApp(App):
 
         return hook
 
+    def _maybe_build_chess_panel(self):
+        """Return a mounted ``ChessPanel`` when ``deps`` looks like a
+        :class:`ChessEnvironment`, else ``None``.
+
+        Duck-typed on ``snapshot()`` + ``user_plays`` so the TUI itself
+        doesn't need to import the chess integration unless the caller
+        opted in. Lazy import keeps ``edgevox-agent home`` / ``robot``
+        free of python-chess startup cost.
+        """
+        deps = self._deps
+        if deps is None or not (hasattr(deps, "snapshot") and hasattr(deps, "user_plays")):
+            return None
+        try:
+            from edgevox.integrations.chess.tui import ChessPanel
+        except ImportError:
+            return None
+        if ChessPanel is None:
+            return None
+        panel = ChessPanel(id="chess-panel")
+        # Subscribe pre-mount; ``post_state`` stashes into ``_pending_state``
+        # until mount completes, then flushes automatically.
+        deps.subscribe(panel.post_state)
+        # Prime with the current position so the board is visible before
+        # the first move.
+        panel.post_state(deps.snapshot())
+        return panel
+
     def compose(self) -> ComposeResult:
         mic_devices = list_input_devices()
         mic_options = [(name, idx) for name, idx in mic_devices]
@@ -960,6 +1115,15 @@ class EdgeVoxApp(App):
         with Horizontal(id="main-area"):
             yield RichLog(id="chat-panel", wrap=True, markup=True, highlight=True)
             with Vertical(id="side-panel"), VerticalScroll(id="side-scroll"):
+                # Chess board lives at the top of the side panel when a
+                # :class:`ChessEnvironment` is wired into ``deps``. Duck-
+                # typed so the TUI doesn't have to import the chess module
+                # unless the example actually uses it.
+                chess_panel = self._maybe_build_chess_panel()
+                if chess_panel is not None:
+                    with Vertical(classes="side-section", id="chess-section"):
+                        yield chess_panel
+                    yield Rule(classes="side-separator")
                 with Vertical(classes="side-section"):
                     yield AudioLevel(id="audio-level")
                 yield Rule(classes="side-separator")
@@ -1238,10 +1402,23 @@ class EdgeVoxApp(App):
 
         Returns dict with: parts, tts_total, ttfs, interrupted, metrics.
         """
-        # Build the pipeline
+        # Build the pipeline. Agent-mode runs the full LLMAgent loop
+        # (skills, ctx injection, handoffs) via AgentProcessor; the
+        # legacy LLM-shim path stays for tools-only / no-tools setups
+        # where the simpler streaming-token chat is enough.
+        if self._agent is not None:
+            from edgevox.core.processors import AgentProcessor
+
+            llm_stage = AgentProcessor(
+                agent=self._agent,
+                deps=self._deps,
+                on_event=self._build_tui_event_sink(chat),
+            )
+        else:
+            llm_stage = LLMProcessor(self._llm)
         processors = [
             STTProcessor(self._stt, language=self._language),
-            LLMProcessor(self._llm),
+            llm_stage,
             SentenceSplitter(),
             TTSProcessor(self._tts),
             PlaybackProcessor(),
@@ -1676,12 +1853,20 @@ class EdgeVoxApp(App):
 
         self.call_from_thread(chat.write, Text("  [2/3] Loading LLM...", style="dim"))
         t_load = time.perf_counter()
+        # When an agent or skills are wired the LLM is loaded *bare* —
+        # the agent owns its own tool registry and dispatches via
+        # ``AgentProcessor`` instead of going through ``LLM.chat`` /
+        # ``LLM.chat_stream``. Pre-built agents get ``bind_llm`` walked
+        # over them so all leaves share this one GGUF in memory.
+        agent_path = self._agent is not None or bool(self._skills)
         self._llm = LLM(
             model_path=self._llm_model,
             language=self._language,
-            tools=self._tools,
-            on_tool_call=self._make_chat_tool_hook(chat),
+            tools=None if agent_path else self._tools,
+            on_tool_call=None if agent_path else self._make_chat_tool_hook(chat),
         )
+        if agent_path:
+            self._build_agent_for_tui(chat)
         llm_name = Path(self._llm._llm.model_path).stem
         gpu_info = _get_gpu_info()
         llm_device = gpu_info["backend"]
@@ -2174,13 +2359,18 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--text-mode", action="store_true", help="Text-only mode, no mic (simple-ui only)")
 
-    # AEC (echo cancellation for voice interrupt)
+    # AEC (echo cancellation for voice interrupt). Default to ``specsub``
+    # — pure-numpy frequency-domain spectral subtraction, no extra deps,
+    # fast enough for real-time use, and dramatically reduces the
+    # self-trigger problem where TTS audio leaking into the mic causes
+    # spurious barge-ins. Pass ``--aec none`` to opt out (RMS-only
+    # threshold, sensitive to room acoustics).
     parser.add_argument(
         "--aec",
         type=str,
-        default="none",
+        default="specsub",
         choices=AEC_CHOICES,
-        help="Echo cancellation backend for voice interrupt: none, nlms, speex (default: none)",
+        help="Echo cancellation backend for voice interrupt: none, nlms, specsub, dtln (default: specsub)",
     )
 
     # Web UI options

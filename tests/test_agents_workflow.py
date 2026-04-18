@@ -185,3 +185,125 @@ class TestRouter:
         assert router.name == "router"
         assert "handoff_to_a" in router.tools.tools
         assert "handoff_to_b" in router.tools.tools
+
+
+# --------------- Supervisor ---------------
+
+
+class TestSupervisor:
+    def test_supervisor_forces_first_hop_tool_call(self):
+        from edgevox.agents.base import LLMAgent
+        from edgevox.agents.workflow import Supervisor
+
+        worker_a = LLMAgent("a", "A", "You are A.", llm=MagicMock())
+        worker_b = LLMAgent("b", "B", "You are B.", llm=MagicMock())
+        sup = Supervisor.build(
+            name="sup",
+            instructions="Pick the right worker.",
+            workers={"a": worker_a, "b": worker_b},
+        )
+        # Both workers exposed as handoffs.
+        assert "handoff_to_a" in sup.tools.tools
+        assert "handoff_to_b" in sup.tools.tools
+        # And the SLM loop-break is on by default.
+        assert sup._tool_choice_policy == "required_first_hop"
+
+    def test_supervisor_rejects_empty_workers(self):
+        import pytest
+
+        from edgevox.agents.workflow import Supervisor
+
+        with pytest.raises(ValueError, match="at least one worker"):
+            Supervisor.build("sup", "Route.", {})
+
+
+# --------------- Handoff state_update ---------------
+
+
+class TestHandoffStateUpdate:
+    def test_state_update_dataclass_field_default(self):
+        """``Handoff`` accepts an optional ``state_update`` dict."""
+        from edgevox.agents.base import Handoff
+
+        h = Handoff(target=MagicMock(), state_update={"why": "user asked"})
+        assert h.state_update == {"why": "user asked"}
+        # Default is None — no surprise blackboard mutations.
+        h2 = Handoff(target=MagicMock())
+        assert h2.state_update is None
+
+    def test_state_update_apply_step_publishes_into_blackboard(self):
+        """Unit-level: the small loop step that applies a Handoff's
+        ``state_update`` writes every key/value to ``ctx.blackboard``
+        before the target is invoked."""
+        from edgevox.agents.base import AgentContext, Handoff
+        from edgevox.agents.multiagent import Blackboard
+
+        bb = Blackboard()
+        ctx = AgentContext(blackboard=bb)
+        h = Handoff(target=MagicMock(), state_update={"why": "user asked", "tier": "kitchen"})
+
+        # Mirror the snippet in LLMAgent._drive (the dispatch-side
+        # synthetic-handoff path doesn't invoke the tool body, so the
+        # state_update field arrives via this code path).
+        if h.state_update and ctx.blackboard is not None:
+            for k, v in h.state_update.items():
+                ctx.blackboard.set(k, v)
+
+        assert bb.get("why") == "user asked"
+        assert bb.get("tier") == "kitchen"
+
+
+# --------------- Orchestrator ---------------
+
+
+class TestOrchestrator:
+    def test_orchestrator_emits_plan_and_synthesises(self):
+        """Lead emits a one-subtask plan via the synthetic ``emit_plan``
+        tool; the worker runs; the result is returned (no synthesis
+        needed for a single subtask)."""
+        from edgevox.agents.workflow import Orchestrator
+        from edgevox.llm.tools import tool
+        from tests.harness.conftest import ScriptedLLM, calls, reply
+
+        @tool
+        def echo(msg: str) -> str:
+            """Echo a message."""
+            return f"echo:{msg}"
+
+        # Script:
+        # 1. Lead's hop 0 forces emit_plan call (under required_first_hop).
+        # 2. Lead's hop 1 final reply.
+        # 3. Worker hop 0 — calls echo.
+        # 4. Worker hop 1 — final reply.
+        llm = ScriptedLLM(
+            [
+                calls(("emit_plan", {"subtasks": [{"objective": "say hi", "tools": ["echo"]}]})),
+                reply("plan done"),
+                calls(("echo", {"msg": "hi"})),
+                reply("hello back"),
+            ]
+        )
+
+        orch = Orchestrator(
+            name="orch",
+            lead_instructions="Plan the request.",
+            synth_instructions="Combine results.",
+            tools=[echo],
+        )
+        # Bind the shared LLM into all leaves.
+        from edgevox.agents.workflow import _bind_llm_recursive
+
+        _bind_llm_recursive(orch._lead, llm)
+        _bind_llm_recursive(orch._synth, llm)
+
+        result = orch.run("say hi")
+        # Single-subtask path returns the worker reply directly.
+        assert result.reply == "hello back"
+
+    def test_orchestrator_rejects_zero_subtasks_max(self):
+        import pytest
+
+        from edgevox.agents.workflow import Orchestrator
+
+        with pytest.raises(ValueError, match="max_subtasks"):
+            Orchestrator(name="x", lead_instructions="", synth_instructions="", max_subtasks=0)

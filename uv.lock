@@ -352,6 +352,12 @@ wheels = [
 ]
 
 [[package]]
+name = "chess"
+version = "1.11.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/93/09/7d04d7581ae3bb8b598017941781bceb7959dd1b13e3ebf7b6a2cd843bc9/chess-1.11.2.tar.gz", hash = "sha256:a8b43e5678fdb3000695bdaa573117ad683761e5ca38e591c4826eba6d25bb39", size = 6131385, upload-time = "2025-02-25T19:10:27.328Z" }
+
+[[package]]
 name = "click"
 version = "8.3.2"
 source = { registry = "https://pypi.org/simple" }
@@ -659,6 +665,7 @@ dependencies = [
     { name = "psutil" },
     { name = "pymicro-wakeword" },
     { name = "pythaitts" },
+    { name = "python-chess" },
     { name = "rich" },
     { name = "sherpa-onnx" },
     { name = "sounddevice" },
@@ -712,6 +719,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'" },
     { name = "pythaitts", specifier = ">=0.4" },
+    { name = "python-chess", specifier = ">=1.10" },
     { name = "rich", specifier = ">=13.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
     { name = "sherpa-onnx", specifier = ">=1.12" },
@@ -722,7 +730,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.27" },
     { name = "websockets", specifier = ">=12" },
 ]
-provides-extras = ["gpu", "dtln", "sim", "sim-mujoco", "dev"]
+provides-extras = ["gpu", "dtln", "sim", "sim-mujoco", "chess-stockfish", "chess-maia", "dev"]
 
 [[package]]
 name = "espeakng-loader"
@@ -2480,6 +2488,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/14/a2/2f8868879219f13daa1f2670e04b7383a5a67b03f8c37855d6070e68ffc3/pythaitts-0.4.2.tar.gz", hash = "sha256:aa1feed3e1636c8af2f550ee8cef48d4f9118dfab733ce714e9ed06dfc1d63ae", size = 16350, upload-time = "2026-01-31T04:50:05.861Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0b/b0/f6d216661e1e4ba530722f0afb0ffc300e139e3641079ef5fc3b4f219d50/pythaitts-0.4.2-py3-none-any.whl", hash = "sha256:dd821c074a529ea9a9ab475471219e8136f42d8e37ab8b0df22d76c19061e7d0", size = 19455, upload-time = "2026-01-31T04:50:04.555Z" },
+]
+
+[[package]]
+name = "python-chess"
+version = "1.999"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "chess" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5f/60/7c7d132b6683ff215bf705fc55ffc0240a6cddea89657407ca0a4fb628d0/python-chess-1.999.tar.gz", hash = "sha256:8cad0388c42242d890ac6368ad64def15cd0165db033df0ad479492e266e5e6c", size = 1453, upload-time = "2020-10-26T11:30:10.118Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/38/47/dfebc06e589530691d33c71bc7b3d8d311252b58ae338980fd4327fe77f2/python_chess-1.999-py3-none-any.whl", hash = "sha256:93b562f8f1124cb7bf56fb095e18743758e69dc6a028ccda0badcaa5c59d88c8", size = 1401, upload-time = "2020-10-26T11:30:07.758Z" },
 ]
 
 [[package]]

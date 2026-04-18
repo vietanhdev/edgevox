@@ -33,6 +33,48 @@ class TestJSONMemoryStore:
         assert tmp_memory_store.get_fact("x") == "2"
         assert len(tmp_memory_store.facts()) == 1
 
+    def test_bi_temporal_invalidate_on_overwrite(self, tmp_memory_store):
+        """Overwriting a fact does NOT delete the prior — it invalidates it
+        and appends a new one with ``supersedes`` pointing at the prior id."""
+        tmp_memory_store.add_fact("location", "kitchen counter")
+        tmp_memory_store.add_fact("location", "drawer 2")
+
+        active = tmp_memory_store.facts()
+        assert len(active) == 1
+        assert active[0].value == "drawer 2"
+        assert active[0].is_active
+
+        history = tmp_memory_store.fact_history("location")
+        assert len(history) == 2
+        assert history[0].value == "kitchen counter"
+        assert history[0].valid_to is not None
+        assert history[0].invalidated_at is not None
+        assert history[1].value == "drawer 2"
+        assert history[1].supersedes == history[0].id
+
+    def test_facts_as_of_returns_world_state_at_t(self, tmp_memory_store):
+        import time as _t
+
+        tmp_memory_store.add_fact("temp", "21")
+        t1 = _t.time()
+        _t.sleep(0.01)
+        tmp_memory_store.add_fact("temp", "22")
+
+        # At t1 the world believed temp=21; "now" believes temp=22.
+        as_of_t1 = tmp_memory_store.facts_as_of(t1)
+        assert len(as_of_t1) == 1 and as_of_t1[0].value == "21"
+
+        as_of_now = tmp_memory_store.facts_as_of(_t.time())
+        assert len(as_of_now) == 1 and as_of_now[0].value == "22"
+
+    def test_re_writing_same_value_is_noop_refresh(self, tmp_memory_store):
+        """Same-value re-writes don't bloat the history — they only
+        bump ``updated_at`` so callers can re-publish safely."""
+        tmp_memory_store.add_fact("color", "red")
+        tmp_memory_store.add_fact("color", "red")
+        history = tmp_memory_store.fact_history("color")
+        assert len(history) == 1
+
     def test_forget_fact(self, tmp_memory_store):
         tmp_memory_store.add_fact("x", "1")
         assert tmp_memory_store.forget_fact("x") is True
@@ -127,6 +169,82 @@ class TestJSONSessionStore:
         loaded = tmp_session_store.load("x")
         assert loaded is not None
         assert loaded.state["k"] == "weird-obj"
+
+
+class TestSQLiteSessionStore:
+    """SQLite-backed SessionStore: same Protocol, atomic + queryable."""
+
+    def _make(self, tmp_path):
+        from edgevox.agents.memory import SQLiteSessionStore
+
+        return SQLiteSessionStore(tmp_path / "sessions.sqlite")
+
+    def test_save_and_load(self, tmp_path):
+        store = self._make(tmp_path)
+        s = Session(messages=[{"role": "user", "content": "hi"}], state={"k": 1})
+        store.save("abc", s)
+        loaded = store.load("abc")
+        assert loaded is not None
+        assert loaded.messages == [{"role": "user", "content": "hi"}]
+        assert loaded.state == {"k": 1}
+
+    def test_load_missing(self, tmp_path):
+        store = self._make(tmp_path)
+        assert store.load("nothing") is None
+
+    def test_list_ids_orders_by_recency(self, tmp_path):
+        import time as _t
+
+        store = self._make(tmp_path)
+        store.save("a", Session())
+        _t.sleep(0.01)
+        store.save("b", Session())
+        _t.sleep(0.01)
+        store.save("c", Session())
+        # Most-recent first.
+        assert store.list_ids() == ["c", "b", "a"]
+
+    def test_overwrite_is_idempotent(self, tmp_path):
+        store = self._make(tmp_path)
+        store.save("x", Session(messages=[{"role": "user", "content": "v1"}]))
+        store.save("x", Session(messages=[{"role": "user", "content": "v2"}]))
+        loaded = store.load("x")
+        assert loaded.messages[0]["content"] == "v2"
+
+    def test_delete(self, tmp_path):
+        store = self._make(tmp_path)
+        store.save("x", Session())
+        assert store.delete("x") is True
+        assert store.delete("x") is False
+        assert store.load("x") is None
+
+    def test_persists_across_reopen(self, tmp_path):
+        path = tmp_path / "persist.sqlite"
+        from edgevox.agents.memory import SQLiteSessionStore
+
+        store_a = SQLiteSessionStore(path)
+        store_a.save("durable", Session(messages=[{"role": "user", "content": "I survived"}]))
+        store_a.close()
+
+        store_b = SQLiteSessionStore(path)
+        loaded = store_b.load("durable")
+        assert loaded.messages[0]["content"] == "I survived"
+
+    def test_thread_safe_concurrent_writes(self, tmp_path):
+        import threading as _t
+
+        store = self._make(tmp_path)
+
+        def writer(prefix: str) -> None:
+            for i in range(20):
+                store.save(f"{prefix}-{i}", Session(messages=[{"role": "user", "content": str(i)}]))
+
+        threads = [_t.Thread(target=writer, args=(p,)) for p in "abcd"]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert len(store.list_ids()) == 80
 
 
 # ---------------------------------------------------------------------------
@@ -226,3 +344,31 @@ class TestNotesFile:
 
     def test_read_missing(self, tmp_notes):
         assert tmp_notes.read() == ""
+
+    def test_append_respects_soft_size_cap(self, tmp_path):
+        """NotesFile soft-bounded rewrite keeps the newest bytes + a
+        single marker line so long-running sessions can't slow-leak."""
+        from edgevox.agents.memory import NotesFile
+
+        notes = NotesFile(tmp_path / "notes.md", max_size_chars=256)
+        for i in range(200):
+            notes.append(f"entry {i:04d} " + ("x" * 40))
+
+        content = notes.read()
+        assert len(content) <= 512  # post-prune file stays well under 2x cap
+        assert "(earlier notes truncated)" in content
+        # Newest entries survive.
+        assert "entry 0199" in content
+        # Oldest are gone.
+        assert "entry 0000" not in content
+
+    def test_disabled_cap_keeps_entire_file(self, tmp_path):
+        """max_size_chars=0 disables pruning — opt-out for power users."""
+        from edgevox.agents.memory import NotesFile
+
+        notes = NotesFile(tmp_path / "notes.md", max_size_chars=0)
+        for i in range(50):
+            notes.append(f"entry {i}")
+        content = notes.read()
+        assert "(earlier notes truncated)" not in content
+        assert "entry 0" in content and "entry 49" in content

@@ -11,11 +11,29 @@ import {
 } from "@/components/StatusIndicator";
 import { MicMeter } from "@/components/MicMeter";
 import { MetricsBar, type Metrics } from "@/components/MetricsBar";
+import { ChessBoardPanel } from "@/components/ChessBoard";
+import { EvalBar } from "@/components/EvalBar";
+import { MoveList } from "@/components/MoveList";
+import type { ChessStateMessage } from "@/components/chess-types";
 import { createMicCapture } from "@/lib/audio-capture";
 import { WavQueuePlayer } from "@/lib/audio-playback";
 import { EdgeVoxWs, type ServerMessage } from "@/lib/ws-client";
 
-function wsUrl(): string {
+// When running inside the Tauri desktop shell, the webview origin is
+// ``tauri://localhost`` — not the edgevox-serve sidecar. The Rust side
+// exposes the real URL via the ``get_ws_url`` command. We prefer that
+// when available and fall back to the same-origin URL for plain-browser
+// dev/prod builds.
+async function wsUrl(): Promise<string> {
+  const tauriInternals = (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+  if (tauriInternals) {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      return await invoke<string>("get_ws_url");
+    } catch (e) {
+      console.warn("Tauri get_ws_url failed; falling back to same-origin", e);
+    }
+  }
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${proto}//${window.location.host}/ws`;
 }
@@ -49,6 +67,10 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [cmdValue, setCmdValue] = useState("");
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
+  // Chess panel stays dormant until the server emits its first
+  // ``chess_state`` message — any non-chess agent session leaves the
+  // web UI looking exactly like it does today.
+  const [chessState, setChessState] = useState<ChessStateMessage | null>(null);
 
   const wsRef = useRef<EdgeVoxWs | null>(null);
   const playerRef = useRef<WavQueuePlayer>(new WavQueuePlayer());
@@ -139,6 +161,9 @@ export default function App() {
         case "voice_changed":
           setInfo((prev) => prev ? { ...prev, voice: msg.voice } : prev);
           break;
+        case "chess_state":
+          setChessState(msg);
+          break;
         default:
           break;
       }
@@ -150,10 +175,17 @@ export default function App() {
     playerRef.current.enqueue(blob);
   }, []);
 
-  const connect = useCallback(() => {
+  const connect = useCallback(async () => {
     if (wsRef.current?.isOpen()) return;
     setError(null);
-    const ws = new EdgeVoxWs(wsUrl(), {
+    let url: string;
+    try {
+      url = await wsUrl();
+    } catch (e) {
+      setError(`sidecar lookup failed: ${(e as Error).message}`);
+      return;
+    }
+    const ws = new EdgeVoxWs(url, {
       onJson: handleJson,
       onAudio: handleAudio,
       onOpen: () => setConnected(true),
@@ -316,6 +348,17 @@ export default function App() {
         <main className="flex-[3] min-w-0 border border-[#1e3a2e] rounded-lg m-1 bg-[#0a0e14] overflow-hidden">
           <ConversationView messages={messages} />
         </main>
+
+        {/* Chess panel — mounts only when the server emits chess_state */}
+        {chessState && (
+          <section className="hidden lg:flex flex-col gap-2 w-[420px] max-w-[440px] border border-[#1e3a2e] rounded-lg m-1 bg-[#0d1117] p-3">
+            <div className="flex gap-3">
+              <EvalBar state={chessState} height={360} />
+              <ChessBoardPanel state={chessState} boardWidth={360} />
+            </div>
+            <MoveList state={chessState} maxHeight={220} />
+          </section>
+        )}
 
         {/* Side panel */}
         <aside className="hidden md:flex flex-col w-72 max-w-[280px] min-w-[220px] border border-[#1e3a2e] rounded-lg m-1 mr-1 bg-[#0d1117] font-mono text-xs overflow-y-auto">

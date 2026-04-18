@@ -68,9 +68,13 @@ class SafetyGuardrailHook:
     Fires at ``on_run_start`` so the LLM never sees disallowed input.
     Matching is case-insensitive substring by default; pass
     ``matcher=...`` to customize.
+
+    Runs at priority 100 (the ``safety rails`` tier) so it fires before
+    any detection or mutation hook has a chance to modify the payload.
     """
 
     points = frozenset({ON_RUN_START})
+    priority = 100
 
     def __init__(
         self,
@@ -114,9 +118,13 @@ class PlanModeHook:
 
     If the approver returns False, the tool is skipped and a synthetic
     result ("user declined") is returned to the LLM so it can adapt.
+
+    Priority 100 — plan-mode denial must beat any detection or
+    mutation hook that might otherwise rewrite the call.
     """
 
     points = frozenset({BEFORE_TOOL})
+    priority = 100
 
     def __init__(
         self,
@@ -185,13 +193,16 @@ class TokenBudgetHook:
 
     def __call__(self, point: str, ctx: AgentContext, payload: dict) -> HookResult | None:
         messages: list[dict] = payload.get("messages", [])
-        if estimate_tokens(messages) <= self.max_context_tokens:
+        # Use the running LLM's tokenizer when present so "4000 tokens"
+        # means actual tokens rather than the ``chars//4`` heuristic.
+        llm = ctx.llm
+        if estimate_tokens(messages, llm) <= self.max_context_tokens:
             return None
         system = messages[0] if messages and messages[0].get("role") == "system" else None
         tail = messages[-self.keep_last :] if self.keep_last > 0 else []
         # Iteratively drop from the middle until we fit.
         trimmed = [*([system] if system else []), *tail]
-        while estimate_tokens(trimmed) > self.max_context_tokens and trimmed:
+        while estimate_tokens(trimmed, llm) > self.max_context_tokens and trimmed:
             # Drop the oldest non-system from tail.
             if len(trimmed) > (1 if system else 0):
                 idx = 1 if system else 0
@@ -210,6 +221,7 @@ class ToolOutputTruncatorHook:
     """
 
     points = frozenset({AFTER_TOOL})
+    priority = 40  # mutation tier
 
     def __init__(self, *, max_chars: int = 2000) -> None:
         self.max_chars = max_chars
@@ -227,6 +239,134 @@ class ToolOutputTruncatorHook:
         return None
 
 
+class ContextWindowManager:
+    """Unified context-window manager. Replaces three hand-composed
+    hooks with one state-machine that owns the budget end-to-end.
+
+    Strategy (Anthropic-style tiered compaction):
+
+    1. ``after_tool`` — truncate oversized **tool result payloads**
+       in-place. Cheap, safe mid-turn, biggest single byte saving on
+       most SLM workloads (sensor dumps, web scrapes).
+    2. ``before_llm`` — if the messages list is still over budget,
+       drop the *bodies* of older tool-result messages while keeping
+       the call history (the LLM still knows what it called and why).
+       Also safe mid-turn: tool-call chains stay intact.
+    3. ``on_run_start`` — only here, between turns, do we run the
+       LLM-summary :class:`Compactor`. Mid-turn summarisation breaks
+       tool-call chains and would invalidate the streamed `messages`.
+
+    All three layers use the typed ``ctx.llm`` to count tokens
+    exactly when available, falling back to the ``chars // 4``
+    heuristic otherwise.
+
+    Replaces the prior bundle of
+    ``TokenBudgetHook + ToolOutputTruncatorHook + ContextCompactionHook``
+    — keep using those individually if you only want one of the layers,
+    or use this one for the recommended default.
+    """
+
+    points = frozenset({ON_RUN_START, BEFORE_LLM, AFTER_TOOL})
+    priority = 40  # mutation tier (alongside other context-mutating hooks)
+
+    def __init__(
+        self,
+        *,
+        max_context_tokens: int = 4000,
+        keep_last: int = 4,
+        tool_output_max_chars: int = 2000,
+        compactor: Compactor | None = None,
+    ) -> None:
+        self.max_context_tokens = max_context_tokens
+        self.keep_last = keep_last
+        self.tool_output_max_chars = tool_output_max_chars
+        # Compactor is optional — drop it for ``hard truncation only``
+        # deployments that don't want to spend an extra LLM call between
+        # turns.
+        self.compactor = compactor
+
+    # ----- ON_RUN_START: full LLM summarisation between turns -----
+
+    def _on_run_start(self, ctx: AgentContext) -> None:
+        if self.compactor is None:
+            return
+        session = ctx.session
+        if not session.messages:
+            return
+        llm = ctx.llm or ctx.state.get("__llm__")
+        new_messages = self.compactor.compact(session.messages, llm)
+        if new_messages is not session.messages and new_messages != session.messages:
+            session.messages[:] = new_messages
+            log.info("ContextWindowManager: compacted to %d messages", len(new_messages))
+
+    # ----- BEFORE_LLM: drop tool-result bodies, then hard truncate -----
+
+    def _before_llm(self, ctx: AgentContext, payload: dict) -> HookResult | None:
+        messages: list[dict] = list(payload.get("messages") or [])
+        llm = ctx.llm
+        if not messages or estimate_tokens(messages, llm) <= self.max_context_tokens:
+            return None
+
+        modified = False
+        # Stage 1: blank out older tool-result bodies (keep envelope so
+        # the call history stays parseable).
+        for i, m in enumerate(messages[: -self.keep_last] if self.keep_last > 0 else messages):
+            if m.get("role") == "tool" and m.get("content"):
+                messages[i] = {**m, "content": "(truncated by context window manager)"}
+                modified = True
+                if estimate_tokens(messages, llm) <= self.max_context_tokens:
+                    break
+
+        # Stage 2: still over budget → preserve system + last keep_last,
+        # drop the middle. This is the hard safety net.
+        if estimate_tokens(messages, llm) > self.max_context_tokens:
+            system = messages[0] if messages and messages[0].get("role") == "system" else None
+            tail = messages[-self.keep_last :] if self.keep_last > 0 else []
+            trimmed = [*([system] if system else []), *tail]
+            while estimate_tokens(trimmed, llm) > self.max_context_tokens and len(trimmed) > (1 if system else 0):
+                idx = 1 if system else 0
+                trimmed.pop(idx)
+            if trimmed != messages:
+                messages = trimmed
+                modified = True
+
+        if not modified:
+            return None
+        out = dict(payload)
+        out["messages"] = messages
+        return HookResult.replace(out, reason="context window managed")
+
+    # ----- AFTER_TOOL: truncate oversized payloads in place -----
+
+    def _after_tool(self, payload: ToolCallResult) -> HookResult | None:
+        result = payload.result
+        if isinstance(result, str) and len(result) > self.tool_output_max_chars:
+            payload.result = (
+                result[: self.tool_output_max_chars]
+                + f"\n… (truncated {len(result) - self.tool_output_max_chars} chars)"
+            )
+            return HookResult.replace(payload, reason="tool output truncated")
+        if isinstance(result, (dict, list)):
+            as_str = json.dumps(result, default=str)
+            if len(as_str) > self.tool_output_max_chars:
+                payload.result = (
+                    as_str[: self.tool_output_max_chars]
+                    + f"\n… (truncated {len(as_str) - self.tool_output_max_chars} chars)"
+                )
+                return HookResult.replace(payload, reason="tool output truncated")
+        return None
+
+    def __call__(self, point: str, ctx: AgentContext, payload: Any) -> HookResult | None:
+        if point == ON_RUN_START:
+            self._on_run_start(ctx)
+            return None
+        if point == BEFORE_LLM:
+            return self._before_llm(ctx, payload)
+        if point == AFTER_TOOL:
+            return self._after_tool(payload)
+        return None
+
+
 # ===========================================================================
 # Memory + compaction hooks
 # ===========================================================================
@@ -235,9 +375,12 @@ class ToolOutputTruncatorHook:
 class MemoryInjectionHook:
     """Inject :class:`MemoryStore`-rendered facts/episodes into the system prompt.
 
-    Fires at ``on_run_start``. Modifies the first system message of the
-    caller's session by appending a ``## Memory`` block. Safe on empty
-    memory (no-op).
+    Fires at ``before_llm``. Modifies the first system message of the
+    payload's ``messages`` list by appending a ``## Memory`` block.
+    Safe on empty memory (no-op) and idempotent across tool hops:
+    the marker check runs **before** ``render_for_prompt`` so the
+    hook's cost on subsequent hops within the same turn is a single
+    substring check.
     """
 
     points = frozenset({BEFORE_LLM})
@@ -256,21 +399,22 @@ class MemoryInjectionHook:
         self.header = header
 
     def __call__(self, point: str, ctx: AgentContext, payload: dict) -> HookResult | None:
+        messages: list[dict] = list(payload.get("messages", []))
+        if not messages or messages[0].get("role") != "system":
+            return None
+        base = messages[0].get("content") or ""
+        marker = self.header.strip()
+        # Idempotent: if we already injected this turn, short-circuit
+        # before paying for memory rendering.
+        if marker and marker in base:
+            return None
         rendered = self.memory_store.render_for_prompt(
             max_facts=self.max_facts,
             max_episodes=self.max_episodes,
         )
         if not rendered:
             return None
-        messages: list[dict] = list(payload.get("messages", []))
-        if not messages or messages[0].get("role") != "system":
-            return None
         system = dict(messages[0])
-        base = system.get("content") or ""
-        marker = self.header.strip()
-        # Idempotent: if we already injected this turn, don't stack.
-        if marker in base:
-            return None
         system["content"] = f"{base}{self.header}{rendered}"
         messages[0] = system
         payload = dict(payload)
@@ -293,17 +437,18 @@ class NotesInjectorHook:
         self.header = header
 
     def __call__(self, point: str, ctx: AgentContext, payload: dict) -> HookResult | None:
-        tail = self.notes.tail(self.max_chars)
-        if not tail.strip():
-            return None
         messages: list[dict] = list(payload.get("messages", []))
         if not messages or messages[0].get("role") != "system":
             return None
-        system = dict(messages[0])
-        base = system.get("content") or ""
+        base = messages[0].get("content") or ""
         marker = self.header.strip()
-        if marker in base:
+        # Idempotent: short-circuit before re-reading notes on every hop.
+        if marker and marker in base:
             return None
+        tail = self.notes.tail(self.max_chars)
+        if not tail.strip():
+            return None
+        system = dict(messages[0])
         system["content"] = f"{base}{self.header}{tail}"
         messages[0] = system
         payload = dict(payload)
@@ -329,7 +474,10 @@ class ContextCompactionHook:
         session = ctx.session
         if not session.messages:
             return None
-        llm = self.llm_getter(ctx) if self.llm_getter else ctx.state.get("__llm__")
+        # Prefer the typed ``ctx.llm`` field; the legacy ``__llm__``
+        # scratchpad key remains as a back-compat fallback for older
+        # hook wiring.
+        llm = self.llm_getter(ctx) if self.llm_getter else (ctx.llm or ctx.state.get("__llm__"))
         new_messages = self.compactor.compact(session.messages, llm)
         if new_messages is not session.messages and new_messages != session.messages:
             session.messages[:] = new_messages
@@ -490,6 +638,7 @@ def _preview(obj: Any, max_chars: int = 120) -> str:
 __all__ = [
     "AuditLogHook",
     "ContextCompactionHook",
+    "ContextWindowManager",
     "EchoingHook",
     "EpisodeLoggerHook",
     "MemoryInjectionHook",

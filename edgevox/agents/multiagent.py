@@ -22,12 +22,14 @@ sensor data, a background planner reacting to user utterances, etc.).
 from __future__ import annotations
 
 import logging
+import queue
 import threading
 import time
 import uuid
+from collections import deque
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from edgevox.agents.base import AgentContext
 from edgevox.agents.bus import EventBus
@@ -226,16 +228,34 @@ def subscribe_inbox(
 Trigger = Callable[["AgentEvent"], "str | None"]
 
 
+RestartPolicy = Literal["permanent", "transient", "temporary"]
+
+
 class BackgroundAgent:
     """Runs an :class:`Agent` on a dedicated thread, triggered by bus events.
 
-    The thread sits on a queue that receives bus events; each event is
-    passed to ``trigger`` which returns either a task string (run the
-    agent with it) or ``None`` (ignore).
+    The thread sits on a :class:`queue.Queue` that receives bus events;
+    each event is passed to ``trigger`` which returns either a task
+    string (run the agent with it) or ``None`` (ignore).
 
     A single in-flight run at a time: if a trigger fires while the agent
     is running, the event is queued and picked up after the current run
-    finishes. Set ``max_queue`` to bound memory.
+    finishes. Set ``max_queue`` to bound memory — overflow behaviour is
+    controlled by ``overflow``: ``"drop_oldest"`` (FIFO eviction, the
+    pre-PR-4 default) or ``"drop_new"`` (preserve older events).
+
+    ``restart`` follows Erlang OTP's supervisor contract:
+
+    - ``"permanent"`` — any exit restarts the loop. Use for daemons that
+      must always be draining their queue (sensor monitor, safety watchdog).
+    - ``"transient"`` (default) — restart only after a crash, stop on
+      clean shutdown. Safe default for application-level agents.
+    - ``"temporary"`` — no restart; one crash and the agent stays down.
+
+    ``max_restarts`` per ``restart_window_s`` caps how aggressively the
+    supervisor loops on a crashing agent — equivalent to OTP's
+    ``MaxR / MaxT``. When the budget is exhausted the loop exits and
+    the agent must be manually restarted.
 
     Stop via :meth:`stop` — waits for the current run to finish.
     """
@@ -248,36 +268,61 @@ class BackgroundAgent:
         subscribe_to: str = "*",
         max_queue: int = 32,
         name: str | None = None,
+        overflow: Literal["drop_oldest", "drop_new"] = "drop_oldest",
+        restart: RestartPolicy = "transient",
+        max_restarts: int = 5,
+        restart_window_s: float = 60.0,
     ) -> None:
         self.agent = agent
         self.trigger = trigger
         self.subscribe_to = subscribe_to
         self.name = name or f"bg-{agent.name}"
-        self._queue: list[AgentEvent] = []
-        self._queue_lock = threading.RLock()
-        self._new_event = threading.Event()
+        # queue.Queue collapses the old (list + lock + Event) triple into
+        # a single correct primitive. put_nowait/get(timeout=) give us
+        # the backpressure and wake semantics without the drop-oldest
+        # race that the hand-rolled version had.
+        self._queue: queue.Queue[AgentEvent] = queue.Queue(maxsize=max_queue)
+        self._overflow = overflow
         self._max_queue = max_queue
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._unsubscribe: Callable[[], None] | None = None
         self._ctx: AgentContext | None = None
+        self._bus: EventBus | None = None
         self._results: list[AgentResult] = []
+        self._restart_policy: RestartPolicy = restart
+        self._max_restarts = max_restarts
+        self._restart_window_s = restart_window_s
+        self._restart_timestamps: deque[float] = deque()
+        # Public telemetry — operators can inspect these without poking
+        # at private state. ``dropped_events`` is the most common
+        # real-world diagnostic ("why did my agent miss that alert?").
+        self.dropped_events = 0
+        self.restart_count = 0
 
     def start(self, ctx: AgentContext, bus: EventBus) -> BackgroundAgent:
         """Attach to ``bus`` and start the worker thread."""
         if self._thread is not None:
             raise RuntimeError(f"{self.name} already started")
         self._ctx = ctx
+        self._bus = bus
         self._stop.clear()
         self._unsubscribe = bus.subscribe(self.subscribe_to, self._enqueue)
+        self._spawn_loop()
+        return self
+
+    def _spawn_loop(self) -> None:
         t = threading.Thread(target=self._loop, name=self.name, daemon=True)
         t.start()
         self._thread = t
-        return self
 
     def stop(self, *, timeout: float = 2.0) -> None:
+        import contextlib
+
         self._stop.set()
-        self._new_event.set()
+        # Kick the queue so a waiting ``get`` returns promptly.
+        with contextlib.suppress(queue.Full):
+            self._queue.put_nowait(None)  # type: ignore[arg-type]
         if self._unsubscribe is not None:
             self._unsubscribe()
             self._unsubscribe = None
@@ -288,36 +333,76 @@ class BackgroundAgent:
     def _enqueue(self, event: Any) -> None:
         if self._stop.is_set():
             return
-        with self._queue_lock:
-            if len(self._queue) >= self._max_queue:
-                # Drop oldest to keep bounded.
-                self._queue.pop(0)
-            self._queue.append(event)
-        self._new_event.set()
+        try:
+            self._queue.put_nowait(event)
+        except queue.Full:
+            self.dropped_events += 1
+            if self._overflow == "drop_oldest":
+                # Best-effort FIFO eviction; a racing put from another
+                # thread may fill the slot before ours lands, but the
+                # queue remains bounded either way.
+                try:
+                    self._queue.get_nowait()
+                    self._queue.put_nowait(event)
+                except (queue.Empty, queue.Full):
+                    pass
+            # drop_new: discard the incoming event; older ones kept.
 
     def _loop(self) -> None:
         assert self._ctx is not None
         while not self._stop.is_set():
-            self._new_event.wait(timeout=0.25)
-            self._new_event.clear()
-            while not self._stop.is_set():
-                with self._queue_lock:
-                    if not self._queue:
-                        break
-                    event = self._queue.pop(0)
-                try:
-                    task = self.trigger(event)
-                except Exception:
-                    log.exception("BackgroundAgent trigger %s raised", self.name)
+            try:
+                event = self._queue.get(timeout=0.25)
+            except queue.Empty:
+                continue
+            if event is None or self._stop.is_set():
+                return
+            try:
+                task = self.trigger(event)
+            except Exception:
+                log.exception("BackgroundAgent trigger %s raised", self.name)
+                continue
+            if not task:
+                continue
+            try:
+                result = self.agent.run(task, self._ctx)
+            except Exception:
+                log.exception("BackgroundAgent %s run failed", self.name)
+                if self._should_restart(crashed=True):
+                    self.restart_count += 1
+                    log.warning(
+                        "BackgroundAgent %s restarting (%d/%d) under policy=%s",
+                        self.name,
+                        self.restart_count,
+                        self._max_restarts,
+                        self._restart_policy,
+                    )
+                    # Fall through to the next iteration — same thread
+                    # keeps running. The OTP supervisor's "restart"
+                    # semantics here are cooperative: we don't respawn
+                    # the thread, just resume the loop.
                     continue
-                if not task:
-                    continue
-                try:
-                    result = self.agent.run(task, self._ctx)
-                except Exception:
-                    log.exception("BackgroundAgent %s run failed", self.name)
-                    continue
-                self._results.append(result)
+                log.error("BackgroundAgent %s: restart budget exhausted; stopping", self.name)
+                return
+            self._results.append(result)
+        # Clean exit path: the loop was asked to stop. Only the
+        # ``permanent`` policy would restart on a clean exit, but since
+        # stop() set the flag we respect it regardless.
+
+    def _should_restart(self, *, crashed: bool) -> bool:
+        """Apply the OTP-style restart policy + rate limit."""
+        if self._restart_policy == "temporary":
+            return False
+        if self._restart_policy == "transient" and not crashed:
+            return False
+        now = time.monotonic()
+        window_start = now - self._restart_window_s
+        while self._restart_timestamps and self._restart_timestamps[0] < window_start:
+            self._restart_timestamps.popleft()
+        if len(self._restart_timestamps) >= self._max_restarts:
+            return False
+        self._restart_timestamps.append(now)
+        return True
 
     @property
     def results(self) -> list[AgentResult]:

@@ -42,6 +42,30 @@ class TestRegistry:
         with pytest.raises(KeyError, match="Unknown LLM preset"):
             resolve_preset("totally-bogus-preset")
 
+    def test_shipped_presets_declare_valid_parsers(self):
+        """Every ``tool_call_parsers`` entry across all shipped presets
+        must resolve to a registered detector. A typo would silently
+        disable detection without this guard."""
+        for slug in PRESETS:
+            # Exercises ``_validate_preset_parsers`` as a side effect.
+            resolve_preset(slug)
+
+    def test_bad_preset_parser_name_rejected(self, monkeypatch):
+        """Injecting an unknown parser name must fail validation loudly."""
+        from edgevox.llm.models import ModelPreset, _validate_preset_parsers
+
+        bogus = ModelPreset(
+            slug="bogus",
+            repo="x/y",
+            filename="z.gguf",
+            size_gb=0.1,
+            family="test",
+            description="",
+            tool_call_parsers=("this-detector-does-not-exist",),
+        )
+        with pytest.raises(ValueError, match="unknown tool-call parser"):
+            _validate_preset_parsers(bogus)
+
     def test_embodied_flag_has_at_least_one(self):
         # RoboBrain is the embodied entry — sanity-check we didn't drop it.
         assert any(p.embodied for p in PRESETS.values())

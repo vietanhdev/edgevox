@@ -363,3 +363,57 @@ def test_nested_run_restores_prior_pointers(scripted_llm_factory):
     # Inner works too.
     inner.run("hi", ctx)
     assert ctx.state["__tool_registry__"] == "SENTINEL"
+
+
+def test_typed_ctx_fields_populated_during_run(scripted_llm_factory):
+    """Hooks must see ``ctx.tool_registry`` and ``ctx.llm`` as typed
+    fields while run() is executing — no need to reach into
+    ``ctx.state["__xxx__"]``."""
+    from edgevox.agents.hooks import BEFORE_LLM
+    from edgevox.llm.tools import ToolRegistry
+
+    seen: dict = {}
+
+    class InspectHook:
+        points = frozenset({BEFORE_LLM})
+
+        def __call__(self, point, ctx, payload):
+            seen["tool_registry"] = ctx.tool_registry
+            seen["llm"] = ctx.llm
+
+    llm = scripted_llm_factory([reply("ok")])
+    agent = make_agent(llm, hooks=[InspectHook()])
+    ctx = AgentContext()
+    agent.run("hi", ctx)
+
+    assert isinstance(seen["tool_registry"], ToolRegistry)
+    assert seen["llm"] is llm
+    # After run, typed fields are restored to None so nested runs don't
+    # leak each other's state.
+    assert ctx.tool_registry is None
+    assert ctx.llm is None
+
+
+def test_hook_owned_state_isolated_per_instance(scripted_llm_factory):
+    """Two independent instances of the same hook class must not share
+    state — that's the whole reason ``ctx.hook_state`` is keyed by
+    ``id(hook)`` rather than by class name."""
+    from edgevox.agents.hooks import AFTER_LLM
+
+    class StatefulHook:
+        points = frozenset({AFTER_LLM})
+
+        def __call__(self, point, ctx, payload):
+            bag = ctx.hook_state.setdefault(id(self), {"count": 0})
+            bag["count"] += 1
+
+    h1 = StatefulHook()
+    h2 = StatefulHook()
+    llm = scripted_llm_factory([reply("ok")])
+    agent = make_agent(llm, hooks=[h1, h2])
+    ctx = AgentContext()
+    agent.run("hi", ctx)
+
+    assert ctx.hook_state[id(h1)]["count"] == 1
+    assert ctx.hook_state[id(h2)]["count"] == 1
+    assert id(h1) != id(h2)

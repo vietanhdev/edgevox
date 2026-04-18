@@ -64,9 +64,13 @@ class LoopDetectorHook:
     hint instead of dispatching. On the third, terminates the turn with
     a polite fallback reply. Resets per-turn counts at
     :data:`~edgevox.agents.hooks.ON_RUN_START`.
+
+    Priority 60 — detection tier. Runs after safety/plan-mode (100)
+    and input-shape (80) hooks, before mutation (40).
     """
 
     points = frozenset({ON_RUN_START, BEFORE_TOOL})
+    priority = 60
 
     def __init__(
         self,
@@ -80,13 +84,15 @@ class LoopDetectorHook:
         self.break_reply = break_reply
 
     def _counts(self, ctx: AgentContext) -> dict[str, int]:
-        state = ctx.session.state.setdefault("__loop_detector__", {"counts": {}})
-        return state["counts"]  # type: ignore[return-value]
+        state = ctx.hook_state.setdefault(id(self), {"counts": {}})
+        return state.setdefault("counts", {})  # type: ignore[return-value]
 
     def __call__(self, point: str, ctx: AgentContext, payload: Any) -> HookResult | None:
         if point == ON_RUN_START:
-            # Reset per-turn fingerprints.
-            ctx.session.state["__loop_detector__"] = {"counts": {}}
+            # Reset per-turn fingerprints in hook-owned state. Keeps
+            # two independent LoopDetectorHook instances from sharing a
+            # counts dict.
+            ctx.hook_state[id(self)] = {"counts": {}}
             return None
 
         # BEFORE_TOOL
@@ -155,19 +161,24 @@ class SchemaRetryHook:
     When a tool raises a ``TypeError``-shaped argument error, injects a
     human-readable hint listing the correct parameters. Budget is one
     enrichment per tool per turn (matches the in-loop behavior).
+
+    Priority 40 — mutation tier. Runs after detection hooks (60) so
+    a loop hint takes precedence over a retry hint on the same call.
     """
 
     points = frozenset({ON_RUN_START, AFTER_TOOL})
+    priority = 40
 
     def __init__(self, *, max_retries_per_tool: int = MAX_SCHEMA_RETRIES) -> None:
         self.max_retries_per_tool = max_retries_per_tool
 
     def _budget(self, ctx: AgentContext) -> dict[str, int]:
-        return ctx.session.state.setdefault("__schema_retry__", {})
+        state = ctx.hook_state.setdefault(id(self), {})
+        return state.setdefault("budget", {})
 
     def __call__(self, point: str, ctx: AgentContext, payload: Any) -> HookResult | None:
         if point == ON_RUN_START:
-            ctx.session.state["__schema_retry__"] = {}
+            ctx.hook_state[id(self)] = {"budget": {}}
             return None
 
         outcome: ToolCallResult = payload
@@ -179,9 +190,10 @@ class SchemaRetryHook:
         if used >= self.max_retries_per_tool:
             return None
 
-        # We need the tool's parameter schema. The registry is on the
-        # agent, not ctx directly. Caller attaches it via ctx.state.
-        tools_registry = ctx.state.get("__tool_registry__") if hasattr(ctx, "state") else None
+        # Prefer the typed ``ctx.tool_registry`` field; fall back to the
+        # legacy ``ctx.state["__tool_registry__"]`` key for one release
+        # so external hook wiring keeps working during migration.
+        tools_registry = ctx.tool_registry or (ctx.state.get("__tool_registry__") if hasattr(ctx, "state") else None)
         parameters: dict | None = None
         if tools_registry is not None:
             tool = tools_registry.tools.get(outcome.name)

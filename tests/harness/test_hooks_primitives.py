@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from edgevox.agents.hooks import (
+    AFTER_LLM,
     AFTER_TOOL,
     BEFORE_LLM,
     BEFORE_TOOL,
@@ -16,6 +17,94 @@ from edgevox.agents.hooks import (
     fire_chain,
     hook,
 )
+
+
+class TestHookPriority:
+    """Hooks fire in priority order (high → low); ties break by registration order."""
+
+    def test_priority_overrides_registration_order(self):
+        order: list[str] = []
+
+        class _H:
+            points = frozenset({AFTER_LLM})
+
+            def __init__(self, name: str, priority: int = 0) -> None:
+                self.name = name
+                self.priority = priority
+
+            def __call__(self, point, ctx, payload):
+                order.append(self.name)
+                return HookResult.cont()
+
+        reg = HookRegistry()
+        reg.register(_H("low", priority=0))
+        reg.register(_H("high", priority=100))
+        reg.register(_H("mid", priority=50))
+        reg.fire(AFTER_LLM, ctx=None, payload={})
+
+        assert order == ["high", "mid", "low"]
+
+    def test_explicit_priority_kwarg_beats_attribute(self):
+        order: list[str] = []
+
+        class _Attr:
+            points = frozenset({AFTER_LLM})
+            priority = 10
+
+            def __init__(self, name):
+                self.name = name
+
+            def __call__(self, point, ctx, payload):
+                order.append(self.name)
+                return HookResult.cont()
+
+        reg = HookRegistry()
+        reg.register(_Attr("a"))
+        # Explicit priority=50 on register() beats the class attribute.
+        reg.register(_Attr("b"), priority=50)
+        reg.fire(AFTER_LLM, ctx=None, payload={})
+
+        assert order == ["b", "a"]
+
+    def test_ties_preserve_registration_order(self):
+        order: list[str] = []
+
+        class _H:
+            points = frozenset({AFTER_LLM})
+            priority = 0
+
+            def __init__(self, name):
+                self.name = name
+
+            def __call__(self, point, ctx, payload):
+                order.append(self.name)
+                return HookResult.cont()
+
+        reg = HookRegistry()
+        for name in ("a", "b", "c", "d"):
+            reg.register(_H(name))
+        reg.fire(AFTER_LLM, ctx=None, payload={})
+
+        assert order == ["a", "b", "c", "d"]
+
+    def test_at_returns_hooks_in_firing_order(self):
+        class _H:
+            points = frozenset({ON_RUN_START})
+
+            def __init__(self, name, prio=0):
+                self.name = name
+                self.priority = prio
+
+            def __call__(self, point, ctx, payload):
+                return None
+
+        reg = HookRegistry()
+        low = _H("low", prio=10)
+        high = _H("high", prio=100)
+        reg.register(low)
+        reg.register(high)
+        # at() returns in firing order: highest priority first.
+        assert [h.name for h in reg.at(ON_RUN_START)] == ["high", "low"]
 
 
 class TestHookResult:

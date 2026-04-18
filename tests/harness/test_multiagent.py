@@ -200,9 +200,98 @@ class TestBackgroundAgent:
         for _ in range(20):
             bus.publish(AgentEvent(kind="any", agent_name="z"))
         time.sleep(0.05)
-        # Queue should never exceed max_queue.
-        assert len(bg._queue) <= 3
+        # Queue is now a stdlib queue.Queue — it enforces ``maxsize`` by
+        # construction and ``put_nowait`` raises queue.Full, so the
+        # watermark check is ``qsize()`` rather than ``len()``.
+        assert bg._queue.qsize() <= 3
+        # And the overflow must have been observed by the drop counter.
+        assert bg.dropped_events > 0
         bg.stop(timeout=2.0)
+
+    def test_crashing_agent_restarts_under_transient_policy(self):
+        """OTP-style transient restart: loop survives a crash and keeps
+        draining events until max_restarts is exhausted."""
+        from unittest.mock import MagicMock
+
+        attempts: list[int] = []
+
+        def flaky_run(_task, _ctx):
+            attempts.append(1)
+            if len(attempts) <= 2:
+                raise RuntimeError("boom")
+            # Third attempt succeeds.
+            from edgevox.agents.base import AgentResult
+
+            return AgentResult(reply="ok", agent_name="flaky")
+
+        fake = MagicMock()
+        fake.name = "flaky"
+        fake.run = MagicMock(side_effect=flaky_run)
+
+        bus = EventBus()
+        ctx = AgentContext(bus=bus)
+        bg = BackgroundAgent(fake, trigger=lambda ev: "go", restart="transient", max_restarts=5)
+        bg.start(ctx, bus)
+        for _ in range(3):
+            bus.publish(AgentEvent(kind="any", agent_name="z"))
+        time.sleep(0.3)
+        bg.stop(timeout=2.0)
+
+        assert bg.restart_count >= 2  # the two crashes triggered restarts
+        assert len(bg.results) == 1  # third attempt succeeded
+
+    def test_temporary_policy_does_not_restart(self):
+        """``restart="temporary"`` exits after the first crash."""
+        from unittest.mock import MagicMock
+
+        attempts: list[int] = []
+
+        def always_crash(_task, _ctx):
+            attempts.append(1)
+            raise RuntimeError("no")
+
+        fake = MagicMock()
+        fake.name = "doomed"
+        fake.run = MagicMock(side_effect=always_crash)
+
+        bus = EventBus()
+        ctx = AgentContext(bus=bus)
+        bg = BackgroundAgent(fake, trigger=lambda ev: "go", restart="temporary")
+        bg.start(ctx, bus)
+        for _ in range(5):
+            bus.publish(AgentEvent(kind="any", agent_name="z"))
+        time.sleep(0.15)
+
+        assert bg.restart_count == 0
+        assert len(attempts) == 1
+        # Loop exited on its own; stop is a no-op but must not hang.
+        bg.stop(timeout=1.0)
+
+    def test_restart_budget_exhausted(self):
+        """max_restarts caps how many crashes the supervisor tolerates
+        before giving up."""
+        from unittest.mock import MagicMock
+
+        fake = MagicMock()
+        fake.name = "doomed"
+        fake.run = MagicMock(side_effect=RuntimeError("no"))
+
+        bus = EventBus()
+        ctx = AgentContext(bus=bus)
+        bg = BackgroundAgent(
+            fake,
+            trigger=lambda ev: "go",
+            restart="permanent",
+            max_restarts=2,
+        )
+        bg.start(ctx, bus)
+        for _ in range(10):
+            bus.publish(AgentEvent(kind="any", agent_name="z"))
+        time.sleep(0.25)
+
+        # Exactly max_restarts crashes were accepted.
+        assert bg.restart_count == 2
+        bg.stop(timeout=1.0)
 
 
 # ---------------------------------------------------------------------------

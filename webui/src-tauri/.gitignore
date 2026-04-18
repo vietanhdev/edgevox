@@ -1,0 +1,5 @@
+# Tauri build artefacts
+target/
+gen/
+# Per-developer overrides
+.env

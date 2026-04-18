@@ -80,6 +80,15 @@ class SessionState:
         self.interrupt_event = asyncio.Event()
         self.busy = False  # True while a turn is being processed
 
+        # :class:`~edgevox.agents.Session` carrying the :class:`LLMAgent` turn
+        # history. Lives beside the legacy ``history`` list during the
+        # transition: the upgraded pipeline uses ``agent_session``; the legacy
+        # ``chat_stream`` path uses ``history``. Lazy-imported so this module
+        # stays light for tests that don't exercise the agent path.
+        from edgevox.agents import Session
+
+        self.agent_session: Session = Session()
+
     @property
     def level(self) -> float:
         return self._level

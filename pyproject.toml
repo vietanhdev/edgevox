@@ -43,6 +43,7 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
     "websockets>=12",
+    "python-chess>=1.10",
 ]
 
 [project.optional-dependencies]
@@ -58,6 +59,13 @@ sim = [
 sim-mujoco = [
     "mujoco>=3.2",  # Tier 2a — 3D tabletop arm (MujocoArmEnvironment)
 ]
+# Chess engines invoke the Stockfish / LC0 binaries as UCI subprocesses — no
+# Python package is installed here. The groups exist only to let users say
+# `pip install 'edgevox[chess-stockfish]'` to signal intent, and to collect
+# any future Python-side helpers. The binary itself ships via the OS package
+# manager (apt / brew / winget) or the upstream installer.
+chess-stockfish = []
+chess-maia = []
 # ros2: rclpy is a system package provided by the ROS2 workspace, not installable from PyPI
 dev = [
     "pytest>=7.0",

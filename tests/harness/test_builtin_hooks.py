@@ -187,6 +187,56 @@ class TestTokenBudget:
         assert len(msgs) <= 8  # system + a few tail turns + the new user
 
 
+class TestContextWindowManager:
+    """Unified manager combines TokenBudget + ToolOutputTruncator + Compaction."""
+
+    def test_truncates_oversized_tool_outputs_in_place(self):
+        from edgevox.agents.hooks_builtin import ContextWindowManager
+        from edgevox.llm import tool
+
+        @tool
+        def big() -> str:
+            """Return a big blob."""
+            return "x" * 5000
+
+        llm = ScriptedLLM([call("big"), reply("done")])
+        agent = _make_agent(
+            llm,
+            tools=[big],
+            hooks=[ContextWindowManager(tool_output_max_chars=500)],
+        )
+        result = agent.run("go")
+        assert result.tool_calls
+        # The result that came back to the loop is truncated.
+        truncated = result.tool_calls[0].result
+        assert isinstance(truncated, str)
+        assert len(truncated) <= 600  # 500 + the truncation marker
+        assert "(truncated" in truncated
+
+    def test_blanks_old_tool_results_under_pressure(self):
+        from edgevox.agents.base import Session
+        from edgevox.agents.hooks_builtin import ContextWindowManager
+
+        ctx = AgentContext(session=Session(messages=[{"role": "system", "content": "sys"}]))
+        # Lots of fat tool messages.
+        for _ in range(20):
+            ctx.session.messages.append({"role": "tool", "name": "x", "content": "y" * 500})
+
+        llm = ScriptedLLM([reply("ok")])
+        agent = _make_agent(
+            llm,
+            hooks=[ContextWindowManager(max_context_tokens=300, keep_last=2)],
+        )
+        agent.run("final", ctx)
+        msgs = llm.calls[0]["messages"]
+        # Some tool messages must have had their bodies blanked or
+        # been dropped entirely under the budget.
+        blanked = sum(1 for m in msgs if m.get("role") == "tool" and "truncated" in m.get("content", ""))
+        # Either we blanked some bodies or hard-truncated; either way
+        # the call must be under-budget.
+        assert blanked > 0 or len(msgs) < 22
+
+
 # ---------------------------------------------------------------------------
 # ToolOutputTruncatorHook
 # ---------------------------------------------------------------------------

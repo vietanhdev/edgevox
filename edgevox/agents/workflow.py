@@ -388,3 +388,205 @@ class Router:
             instructions=instructions,
             handoffs=list(routes.values()),
         )
+
+
+# --------- Supervisor (LangGraph supervisor pattern) ---------
+
+
+class Supervisor:
+    """Convenience builder for a LangGraph-style supervisor agent.
+
+    A supervisor is the same wire-shape as :class:`Router` — one LLM
+    call routes to a worker agent via a synthetic ``handoff_to_<name>``
+    tool — but the API explicitly models the (name → worker) graph and
+    forces the supervisor's :class:`LLMAgent` to use the
+    ``required_first_hop`` tool-choice policy so it *must* dispatch
+    rather than ramble. This is the canonical SLM loop-break for
+    multi-agent dispatch.
+
+    Use :class:`Router` when you want a router that can also reply
+    plainly (e.g. small-talk fallback). Use :class:`Supervisor` when
+    every turn must end up at a worker.
+    """
+
+    @classmethod
+    def build(
+        cls,
+        name: str,
+        instructions: str,
+        workers: dict[str, Agent],
+        *,
+        description: str = "",
+    ) -> LLMAgent:
+        """Construct the supervisor as an :class:`LLMAgent` with only
+        worker agents in its tool list and a forced first-hop tool
+        call."""
+        if not workers:
+            raise ValueError("Supervisor needs at least one worker")
+        return LLMAgent(
+            name=name,
+            description=description or f"Supervisor over {len(workers)} workers",
+            instructions=instructions,
+            handoffs=list(workers.values()),
+            tool_choice_policy="required_first_hop",
+        )
+
+
+# --------- Orchestrator-Worker (Anthropic Claude Research pattern) ---------
+
+
+class Orchestrator:
+    """Anthropic-style orchestrator-worker: a lead LLM emits a JSON
+    plan; for each subtask we ``spawn_subagent`` with a *scoped*
+    subset of the registered tools; the lead then synthesises a final
+    answer from the workers' replies.
+
+    The lead and worker can share one GGUF in memory thanks to
+    :meth:`LLMAgent.spawn_subagent` — and each subagent gets a fresh
+    :class:`~edgevox.agents.base.Session` so its tool history doesn't
+    pollute the lead's. Matches the "orchestrator-worker" pattern
+    documented in the Anthropic engineering writeup of Claude
+    Research; ~90% of single-agent quality at a fraction of the
+    context cost on long fan-out tasks.
+
+    The plan format is intentionally minimal — a JSON array of
+    ``{"tools": [...], "objective": "...", "output_format": "..."}``
+    objects — so any 1-3B SLM can emit it under
+    ``tool_choice_policy="required_first_hop"`` (a strict
+    ``emit_plan`` tool whose argument schema is the plan dict).
+    Defer richer plan grammars (DAG dependencies, retries) to v2.
+
+    Usage::
+
+        orch = Orchestrator(
+            name="research",
+            lead_instructions="Decompose the user request into 1-3 sub-questions.",
+            synth_instructions="Combine the worker answers into one short reply.",
+            tools=[search, lookup, calc],
+        )
+        result = orch.run("Plan a kitchen remodel under $5k", ctx)
+    """
+
+    def __init__(
+        self,
+        name: str,
+        lead_instructions: str,
+        synth_instructions: str,
+        *,
+        tools: list | None = None,
+        max_subtasks: int = 4,
+        worker_max_tool_hops: int = 3,
+        description: str = "",
+    ) -> None:
+        from edgevox.llm.tools import tool as tool_decorator
+
+        if max_subtasks < 1:
+            raise ValueError("max_subtasks must be >= 1")
+        self.name = name
+        self.description = description or f"Orchestrator-worker over {len(tools or [])} tools"
+        self._tools = list(tools or [])
+        self._max_subtasks = max_subtasks
+        self._worker_max_tool_hops = worker_max_tool_hops
+
+        # The lead emits a single ``emit_plan`` tool call whose
+        # arguments are the full plan dict. Forcing that via
+        # ``tool_choice_policy="required_first_hop"`` + a GBNF grammar
+        # eliminates the malformed-JSON failure mode SLMs otherwise
+        # hit on plan-shaped output.
+        self._captured_plan: list[dict] = []
+
+        @tool_decorator
+        def emit_plan(subtasks: list) -> str:
+            """Submit the orchestrator's decomposition.
+
+            Args:
+                subtasks: ordered list, each item ``{"objective": str,
+                    "tools": [str], "output_format": str}``. Workers
+                    run in parallel; their outputs are synthesised
+                    into one final answer.
+            """
+            # Capture into the orchestrator's per-run buffer; the
+            # actual fan-out happens after the lead returns.
+            self._captured_plan.append({"subtasks": subtasks})
+            return "plan accepted"
+
+        self._lead = LLMAgent(
+            name=f"{name}.lead",
+            description=f"Plan emitter for {name}",
+            instructions=lead_instructions,
+            tools=[emit_plan],
+            tool_choice_policy="required_first_hop",
+        )
+        self._synth = LLMAgent(
+            name=f"{name}.synth",
+            description=f"Result synthesiser for {name}",
+            instructions=synth_instructions,
+        )
+
+    def run(self, task: str, ctx: AgentContext | None = None) -> AgentResult:
+        ctx = ctx or AgentContext()
+        ctx.emit("agent_start", self.name, {"task": task})
+        t0 = time.perf_counter()
+
+        # Phase 1: lead emits a plan via the ``emit_plan`` tool. Reset
+        # the plan buffer so concurrent runs don't leak.
+        self._captured_plan.clear()
+        self._lead.run(task, ctx)
+        plan = self._captured_plan[-1] if self._captured_plan else {"subtasks": []}
+        subtasks = plan.get("subtasks") or []
+        if not isinstance(subtasks, list):
+            subtasks = []
+        subtasks = subtasks[: self._max_subtasks]
+
+        # Phase 2: spawn one subagent per subtask, each with a tool
+        # filter so only the tools the plan named are visible. Run
+        # synchronously — the LLM's inference lock would serialise
+        # parallel subagents anyway on a single-GGUF deployment.
+        worker_replies: list[tuple[str, str]] = []
+        tool_index = {self._tool_name(t): t for t in self._tools}
+        for st in subtasks:
+            if ctx.stop.is_set() or ctx.should_stop():
+                break
+            objective = (st or {}).get("objective", "")
+            wanted = (st or {}).get("tools", []) or []
+            output_format = (st or {}).get("output_format", "concise text")
+            if not isinstance(objective, str) or not objective.strip():
+                continue
+            scoped = [tool_index[n] for n in wanted if isinstance(n, str) and n in tool_index]
+            sub_result = self._lead.spawn_subagent(
+                f"{objective}\n\nReply format: {output_format}",
+                parent_ctx=ctx,
+                tools=scoped or None,
+                max_tool_hops=self._worker_max_tool_hops,
+            )
+            worker_replies.append((objective, sub_result.reply))
+
+        # Phase 3: synth folds the worker outputs into one reply.
+        if not worker_replies:
+            final_reply = ""
+        elif len(worker_replies) == 1:
+            # No synthesis needed when there's only one worker.
+            final_reply = worker_replies[0][1]
+        else:
+            synth_input = "\n\n".join(f"### {obj}\n{reply}" for obj, reply in worker_replies if reply)
+            synth_result = self._synth.run(f"Original request: {task}\n\nWorker outputs:\n{synth_input}", ctx)
+            final_reply = synth_result.reply
+
+        elapsed = time.perf_counter() - t0
+        out = AgentResult(reply=final_reply, agent_name=self.name, elapsed=elapsed)
+        ctx.emit("agent_end", self.name, {"reply": final_reply})
+        return out
+
+    def run_stream(self, task: str, ctx: AgentContext | None = None) -> Iterator[str]:
+        result = self.run(task, ctx)
+        if result.reply:
+            yield result.reply
+
+    @staticmethod
+    def _tool_name(t: Any) -> str:
+        # @tool decorator stamps __edgevox_tool__ on the function;
+        # the tool's ``.name`` attribute is the canonical name.
+        descriptor = getattr(t, "__edgevox_tool__", None)
+        if descriptor is not None:
+            return getattr(descriptor, "name", "")
+        return getattr(t, "name", getattr(t, "__name__", ""))

@@ -199,17 +199,21 @@ HookCallable = Callable[["AgentContext", Any], "HookResult | None"]
 # ---------------------------------------------------------------------------
 
 
-def hook(*points: str) -> Callable[[Callable[..., Any]], Hook]:
+def hook(*points: str, priority: int = 0) -> Callable[[Callable[..., Any]], Hook]:
     """Decorator to wrap a function into a :class:`Hook`.
 
     The decorated function may take either ``(point, ctx, payload)`` or
     ``(ctx, payload)``; the decorator introspects and adapts.
 
+    ``priority`` follows the :class:`HookRegistry` scale — higher
+    values fire earlier. Use 100 for safety rails, 60 for detection,
+    0 (the default) for observability.
+
     Register the *returned* object (not the bare function):
 
     .. code-block:: python
 
-        @hook("before_tool")
+        @hook("before_tool", priority=60)
         def my_filter(ctx, payload):
             if payload.name == "dangerous":
                 return HookResult.end("no.")
@@ -236,6 +240,9 @@ def hook(*points: str) -> Callable[[Callable[..., Any]], Hook]:
 
         class _FnHook:
             points = frozen_points
+            # Surfaced so HookRegistry.register picks it up when the
+            # decorated function is passed without an explicit priority.
+            priority = 0
 
             def __init__(self, target: Callable[..., Any]) -> None:
                 self._fn = target
@@ -255,6 +262,7 @@ def hook(*points: str) -> Callable[[Callable[..., Any]], Hook]:
             def __repr__(self) -> str:
                 return f"<hook {self.__name__} points={sorted(self.points)}>"
 
+        _FnHook.priority = priority
         return _FnHook(fn)
 
     return wrap
@@ -268,35 +276,62 @@ def hook(*points: str) -> Callable[[Callable[..., Any]], Hook]:
 class HookRegistry:
     """Ordered collection of hooks, indexed by fire point.
 
-    Registration order within a point is preserved and determines
-    execution order. Hook exceptions are logged and treated as
-    ``continue`` — one misbehaving hook never breaks the loop.
+    Hooks fire in **priority order** within each point — higher
+    ``priority`` runs first. Ties break by registration order so hook
+    bundles like :func:`~edgevox.llm.hooks_slm.default_slm_hooks` keep
+    a deterministic sequence.
+
+    Recommended priority scale (convention, not enforced):
+
+    - ``100``: safety / input-output rails (SafetyGuardrail, future LlamaGuard)
+    - ``80``: input-shape hooks (MemoryInjection, TokenBudget, NotesInjector)
+    - ``60``: detection (LoopDetector, EchoedPayload)
+    - ``40``: mutation (SchemaRetry, ToolOutputTruncator)
+    - ``0``: observability (AuditLog, Timing, EpisodeLogger) — the default
+
+    A hook declares its priority via a ``priority`` class or instance
+    attribute, or it's passed to :meth:`register`. Unspecified = ``0``.
+
+    Hook exceptions are logged and treated as ``continue`` — one
+    misbehaving hook never breaks the loop.
     """
 
+    DEFAULT_PRIORITY = 0
+
     def __init__(self, hooks: Iterable[Hook] | None = None) -> None:
-        self._by_point: dict[str, list[Hook]] = {p: [] for p in FIRE_POINTS}
+        self._by_point: dict[str, list[tuple[int, int, Hook]]] = {p: [] for p in FIRE_POINTS}
+        # Monotonic counter for stable tie-breaking on equal priorities.
+        self._seq = 0
         if hooks:
             for h in hooks:
                 self.register(h)
 
     # ----- registration -----
 
-    def register(self, h: Hook) -> HookRegistry:
-        """Register a hook. Raises if ``h`` has no ``points`` attribute."""
+    def register(self, h: Hook, *, priority: int | None = None) -> HookRegistry:
+        """Register a hook. Raises if ``h`` has no ``points`` attribute.
+
+        ``priority`` overrides any ``h.priority`` attribute and defaults
+        to :attr:`DEFAULT_PRIORITY` when neither is set.
+        """
         points = getattr(h, "points", None)
         if not points:
             raise TypeError(f"{h!r} is not a Hook — missing .points attribute")
+        effective = priority if priority is not None else getattr(h, "priority", self.DEFAULT_PRIORITY)
         for p in points:
             if p not in FIRE_POINTS:
                 raise ValueError(f"Hook {h!r} declares unknown point {p!r}")
-            self._by_point[p].append(h)
+            self._seq += 1
+            self._by_point[p].append((int(effective), self._seq, h))
         return self
 
     def extend(self, other: HookRegistry | Iterable[Hook]) -> HookRegistry:
         """Merge another registry or iterable of hooks into this one."""
         if isinstance(other, HookRegistry):
             for p in FIRE_POINTS:
-                self._by_point[p].extend(other._by_point.get(p, ()))
+                for prio, _, h in other._by_point.get(p, ()):
+                    self._seq += 1
+                    self._by_point[p].append((prio, self._seq, h))
         else:
             for h in other:
                 self.register(h)
@@ -306,7 +341,9 @@ class HookRegistry:
         """Return a shallow copy of this registry."""
         new = HookRegistry()
         for p in FIRE_POINTS:
-            new._by_point[p] = list(self._by_point.get(p, ()))
+            for prio, _, h in self._by_point.get(p, ()):
+                new._seq += 1
+                new._by_point[p].append((prio, new._seq, h))
         return new
 
     # ----- inspection -----
@@ -320,19 +357,28 @@ class HookRegistry:
     def __iter__(self) -> Iterator[Hook]:
         seen: set[int] = set()
         for hs in self._by_point.values():
-            for h in hs:
+            for _, _, h in hs:
                 if id(h) not in seen:
                     seen.add(id(h))
                     yield h
 
     def at(self, point: str) -> list[Hook]:
-        """Hooks registered at a specific point (copy)."""
-        return list(self._by_point.get(point, ()))
+        """Hooks registered at a specific point, in firing order (copy)."""
+        return [h for _, _, h in self._ordered(point)]
+
+    def _ordered(self, point: str) -> list[tuple[int, int, Hook]]:
+        """Return entries at ``point`` sorted by (-priority, seq).
+
+        Python's sort is stable so equal priorities keep registration
+        order as the tie-break — the contract callers expect.
+        """
+        entries = self._by_point.get(point, ())
+        return sorted(entries, key=lambda e: (-e[0], e[1]))
 
     # ----- firing -----
 
     def fire(self, point: str, ctx: AgentContext, payload: Any) -> HookResult:
-        """Run all hooks at ``point`` in registration order.
+        """Run all hooks at ``point`` in priority-then-registration order.
 
         Each hook receives the payload (possibly modified) from the
         previous hook. Returns the first ``end_turn`` or the final
@@ -342,15 +388,15 @@ class HookRegistry:
         if point not in FIRE_POINTS:
             raise ValueError(f"Unknown hook point {point!r}")
 
-        hooks = self._by_point.get(point, ())
-        if not hooks:
+        entries = self._ordered(point)
+        if not entries:
             return HookResult(action=HookAction.CONTINUE, payload=payload)
 
         current = payload
         modified = False
         reasons: list[str] = []
 
-        for h in hooks:
+        for _, _, h in entries:
             try:
                 outcome = h(point, ctx, current)
             except Exception:

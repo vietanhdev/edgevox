@@ -50,6 +50,7 @@ from edgevox.agents.hooks import (
     fire_chain,
 )
 from edgevox.agents.skills import GoalStatus, Skill
+from edgevox.llm.grammars import GrammarCache
 from edgevox.llm.llamacpp import _strip_thinking, get_system_prompt, parse_tool_calls_from_content
 from edgevox.llm.tools import Tool, ToolCallResult, ToolRegistry
 from edgevox.llm.tools import tool as tool_decorator
@@ -149,6 +150,16 @@ class AgentContext:
     artifacts: ArtifactStore | None = None
     agent_name: str = ""
     state: dict[str, Any] = field(default_factory=dict)
+    # Populated by :class:`LLMAgent.run` so hooks have typed access to
+    # the running agent's tool registry and LLM backend without reaching
+    # into ``ctx.state`` with magic keys. ``state`` stays user-only.
+    tool_registry: ToolRegistry | None = None
+    llm: LLM | None = None
+    # Per-hook scratchpad — hooks keyed by ``id(hook)`` get their own
+    # isolated dict so fingerprint counters / retry budgets don't leak
+    # across hook instances. Replaces the previous ``ctx.session.state["__xxx__"]``
+    # shared keys used by :mod:`edgevox.llm.hooks_slm`.
+    hook_state: dict[int, dict[str, Any]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.on_event is not None:
@@ -193,11 +204,18 @@ class Handoff:
     it stops calling the current LLM and invokes ``target.run(task, ctx)``.
     ``task`` defaults to the original user task if omitted — the common
     case for a Router.
+
+    ``state_update`` (LangGraph ``Command``-style): when set, the keys
+    are written into ``ctx.blackboard`` before the target runs. The
+    target — or any subscribed observer — sees the update as part of
+    the same control transfer. Useful for routers that want to record
+    *why* they handed off without polluting the target's prompt.
     """
 
     target: Agent
     task: str | None = None
     reason: str = ""
+    state_update: dict[str, Any] | None = None
 
 
 # --------- Agent protocol ---------
@@ -246,12 +264,21 @@ class LLMAgent:
         handoffs: list[Agent] | None = None,
         hooks: HooksArg = None,
         max_tool_hops: int = 3,
+        tool_choice_policy: Literal["auto", "required_first_hop", "required_always"] = "auto",
     ) -> None:
         self.name = name
         self.description = description
         self.instructions = instructions
         self._llm: LLM | None = llm
         self._max_tool_hops = max_tool_hops
+        # Tool-choice lifecycle. ``auto`` (default) lets the model
+        # choose; ``required_first_hop`` enforces a structured tool
+        # call on hop 0 via GBNF grammar (cf. OpenAI Agents SDK's
+        # canonical SLM loop-break: required → auto after first
+        # dispatch); ``required_always`` enforces it on every hop
+        # until the budget is exhausted.
+        self._tool_choice_policy = tool_choice_policy
+        self._grammar_cache = GrammarCache()
 
         # Skills are stored alongside tools. We synthesize a synthetic
         # @tool for each skill and handoff target so the model sees a
@@ -354,6 +381,27 @@ class LLMAgent:
             )
         return self._llm
 
+    def _tool_choice_for_hop(self, hop: int, tool_schemas: list[dict] | None) -> tuple[str | None, Any]:
+        """Resolve ``(tool_choice, grammar)`` for the current hop.
+
+        Implements the OpenAI Agents SDK SLM loop-break: under
+        ``required_first_hop`` the model is forced to call a tool on
+        hop 0 (grammar-constrained, so SLMs can't emit malformed JSON
+        for the structural envelope) and is then released to ``auto``
+        on subsequent hops so the final reply can land. Returns
+        ``(None, None)`` when the policy is ``auto`` or no tools are
+        registered — the historical default behaviour, unchanged.
+        """
+        if not tool_schemas:
+            return None, None
+        if self._tool_choice_policy == "auto":
+            return None, None
+        if self._tool_choice_policy == "required_first_hop" and hop > 0:
+            return "auto", None
+        # required_always, OR required_first_hop on hop 0
+        grammar = self._grammar_cache.get("tool", tool_schemas)
+        return "required", grammar
+
     def _build_system_message(self) -> dict:
         """Build the system prompt for this agent. Each run() builds a
         fresh one so multiple agents sharing an LLM don't clobber each
@@ -374,19 +422,35 @@ class LLMAgent:
         """
         ctx = ctx or AgentContext()
         ctx.agent_name = self.name
-        # Per-run ctx scratchpad bookkeeping: attach the tool registry
-        # so hooks that need it (e.g. SchemaRetryHook) can find it.
-        prev_tool_registry = ctx.state.get("__tool_registry__")
-        prev_llm = ctx.state.get("__llm__")
+        # Per-run ctx bookkeeping: publish the typed tool registry + LLM
+        # so hooks can reach them via ``ctx.tool_registry`` / ``ctx.llm``
+        # (typed fields) without touching ``ctx.state``. The legacy
+        # ``ctx.state["__tool_registry__"]`` / ``["__llm__"]`` keys are
+        # still populated for a single release as a back-compat shim —
+        # remove once no external hook depends on them.
+        prev_tool_registry = ctx.tool_registry
+        prev_llm = ctx.llm
+        ctx.tool_registry = self._tool_registry
+        if self._llm is not None:
+            ctx.llm = self._llm
+        # Back-compat: legacy magic keys. Safe to remove after external
+        # hook packages migrate — no framework code reads these now.
+        prev_state_tool_registry = ctx.state.get("__tool_registry__")
+        prev_state_llm = ctx.state.get("__llm__")
         ctx.state["__tool_registry__"] = self._tool_registry
         if self._llm is not None:
             ctx.state["__llm__"] = self._llm
 
         ctx.emit("agent_start", self.name, {"task": task})
 
-        # Reset interrupt at turn start so a prior turn's interrupt
-        # doesn't pre-empt this one.
+        # If the previous turn was cut short by a barge-in, surface the
+        # interrupt as a synthetic ``role="tool"`` envelope so the model
+        # can respond coherently this turn instead of hallucinating that
+        # the cancelled skill succeeded. We do this *before* resetting
+        # the controller — reset clears ``latest``.
+        pending_interrupt_msg: dict | None = None
         if ctx.interrupt is not None:
+            pending_interrupt_msg = ctx.interrupt.as_tool_result()
             ctx.interrupt.reset()
 
         if ctx.should_stop():
@@ -396,6 +460,8 @@ class LLMAgent:
                 AgentResult(reply="Stopped.", agent_name=self.name, preempted=True),
                 prev_tool_registry,
                 prev_llm,
+                prev_state_tool_registry,
+                prev_state_llm,
             )
 
         # Fire on_run_start.
@@ -412,7 +478,14 @@ class LLMAgent:
             if end_r.action is HookAction.MODIFY and isinstance(end_r.payload, AgentResult):
                 result = end_r.payload
             ctx.emit("agent_end", self.name, {"reply": result.reply, "hook_ended": r.reason})
-            return self._finalize_ctx_state(ctx, result, prev_tool_registry, prev_llm)
+            return self._finalize_ctx_state(
+                ctx,
+                result,
+                prev_tool_registry,
+                prev_llm,
+                prev_state_tool_registry,
+                prev_state_llm,
+            )
         if r.action is HookAction.MODIFY and isinstance(r.payload, dict):
             task = r.payload.get("task", task)
 
@@ -431,6 +504,11 @@ class LLMAgent:
         else:
             messages = [self._build_system_message()]
 
+        # Splice the interrupt-as-tool-result *after* the system prompt
+        # so the model treats it as recent context for this turn.
+        if pending_interrupt_msg is not None:
+            messages.append(pending_interrupt_msg)
+
         t0 = time.perf_counter()
         reply, handoff, captured_tools, ended_by_hook = self._drive(llm, messages, task, ctx)
         # Persist the updated messages back into the session so the next
@@ -440,6 +518,11 @@ class LLMAgent:
 
         if handoff is not None:
             ctx.emit("handoff", self.name, {"target": handoff.target.name, "reason": handoff.reason})
+            # Apply LangGraph-style state_update before the target runs
+            # so its hooks / blackboard watchers see the new state.
+            if handoff.state_update and ctx.blackboard is not None:
+                for k, v in handoff.state_update.items():
+                    ctx.blackboard.set(k, v)
             target_task = handoff.task or task
             # Sub-agent runs with a fresh Session so its tool history
             # doesn't pollute the router's. deps / stop / on_event flow
@@ -455,13 +538,23 @@ class LLMAgent:
                 interrupt=ctx.interrupt,
                 artifacts=ctx.artifacts,
             )
+            # ``tool_registry``/``llm`` on the subagent ctx are installed
+            # by the target's own ``run()`` — don't pre-seed from the
+            # router, or the target's hooks would see the wrong tools.
             if isinstance(handoff.target, LLMAgent) and handoff.target._llm is None:
                 handoff.target.bind_llm(llm)
             sub_result = handoff.target.run(target_task, sub_ctx)
             sub_result.handed_off_to = handoff.target.name
             sub_result.elapsed = time.perf_counter() - t0
             ctx.emit("agent_end", self.name, {"reply": sub_result.reply, "via_handoff": True})
-            return self._finalize_ctx_state(ctx, sub_result, prev_tool_registry, prev_llm)
+            return self._finalize_ctx_state(
+                ctx,
+                sub_result,
+                prev_tool_registry,
+                prev_llm,
+                prev_state_tool_registry,
+                prev_state_llm,
+            )
 
         preempted = ctx.should_stop()
         result = AgentResult(
@@ -479,25 +572,37 @@ class LLMAgent:
             result = end_r.payload
 
         ctx.emit("agent_end", self.name, {"reply": result.reply, "preempted": preempted})
-        return self._finalize_ctx_state(ctx, result, prev_tool_registry, prev_llm)
+        return self._finalize_ctx_state(
+            ctx,
+            result,
+            prev_tool_registry,
+            prev_llm,
+            prev_state_tool_registry,
+            prev_state_llm,
+        )
 
     @staticmethod
     def _finalize_ctx_state(
         ctx: AgentContext,
         result: AgentResult,
-        prev_tool_registry: Any,
-        prev_llm: Any,
+        prev_tool_registry: ToolRegistry | None,
+        prev_llm: LLM | None,
+        prev_state_tool_registry: Any = None,
+        prev_state_llm: Any = None,
     ) -> AgentResult:
-        """Restore ctx.state pointers we set at run() entry so nested
-        runs don't clobber each other's state."""
-        if prev_tool_registry is None:
+        """Restore ctx fields + legacy scratchpad keys we set at run()
+        entry so nested runs don't clobber each other's state."""
+        ctx.tool_registry = prev_tool_registry
+        ctx.llm = prev_llm
+        # Legacy keys restored identically — back-compat only.
+        if prev_state_tool_registry is None:
             ctx.state.pop("__tool_registry__", None)
         else:
-            ctx.state["__tool_registry__"] = prev_tool_registry
-        if prev_llm is None:
+            ctx.state["__tool_registry__"] = prev_state_tool_registry
+        if prev_state_llm is None:
             ctx.state.pop("__llm__", None)
         else:
-            ctx.state["__llm__"] = prev_llm
+            ctx.state["__llm__"] = prev_state_llm
         return result
 
     def _drive(
@@ -543,7 +648,36 @@ class LLMAgent:
                 new_tools = pre.payload.get("tools", tool_schemas)
                 tool_schemas = new_tools
 
-            result = llm.complete(messages, tools=tool_schemas, stream=False)
+            # Plumb the interrupt cancel-token into llama-cpp's
+            # stopping_criteria. Without this, a barge-in only stops
+            # downstream consumers — the LLM keeps generating until
+            # ``max_tokens`` exhausts. Test doubles that don't accept
+            # ``stop_event`` are tolerated below.
+            cancel_token = None
+            if ctx.interrupt is not None and ctx.interrupt.policy.cancel_llm:
+                cancel_token = ctx.interrupt.cancel_token
+
+            # Pick a tool-choice + grammar combination per the policy.
+            # ``auto`` is the historical default (no constraint).
+            tool_choice, grammar = self._tool_choice_for_hop(hop, tool_schemas)
+            try:
+                result = llm.complete(
+                    messages,
+                    tools=tool_schemas,
+                    tool_choice=tool_choice,
+                    stream=False,
+                    stop_event=cancel_token,
+                    grammar=grammar,
+                )
+            except TypeError:
+                # Back-compat for LLM shims (tests) that predate
+                # ``stop_event`` / ``grammar``. Drop the new kwargs.
+                result = llm.complete(
+                    messages,
+                    tools=tool_schemas,
+                    tool_choice=tool_choice,
+                    stream=False,
+                )
             message = result["choices"][0]["message"]
             tool_calls = message.get("tool_calls") or []
             raw_content = message.get("content") or ""
@@ -656,10 +790,15 @@ class LLMAgent:
                     }
                 )
                 for call, (name, payload, _) in zip(real_calls, dispatched, strict=False):
+                    # Preserve the model-emitted call id verbatim (Mistral
+                    # expects a 9-char round-trip; Qwen/chatml carry their
+                    # own ids too). Only synthesise one when the detector
+                    # didn't surface one.
+                    call_id = call.get("id") or f"call_{hop}_{name}"
                     messages.append(
                         {
                             "role": "tool",
-                            "tool_call_id": call.get("id", f"call_{hop}_{name}"),
+                            "tool_call_id": call_id,
                             "name": name,
                             "content": json.dumps(payload, default=str),
                         }

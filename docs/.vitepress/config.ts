@@ -30,6 +30,7 @@ export default withMermaid(
       nav: [
         { text: "Guide", link: "/guide/" },
         { text: "Reference", link: "/reference/cli" },
+        { text: "ADRs", link: "/adr/001-cancel-token-plumbing" },
         {
           text: "Links",
           items: [
@@ -59,6 +60,18 @@ export default withMermaid(
               { text: "ROS2 Integration", link: "/guide/ros2" },
             ],
           },
+          {
+            text: "Harness Architecture",
+            collapsed: false,
+            items: [
+              { text: "Agent loop", link: "/guide/agent-loop" },
+              { text: "Hooks", link: "/guide/hooks" },
+              { text: "Memory", link: "/guide/memory" },
+              { text: "Multi-agent", link: "/guide/multiagent" },
+              { text: "Interrupt & barge-in", link: "/guide/interrupt" },
+              { text: "Tool calling", link: "/guide/tool-calling" },
+            ],
+          },
         ],
         "/reference/": [
           {
@@ -68,6 +81,16 @@ export default withMermaid(
               { text: "Server API", link: "/reference/server-api" },
               { text: "Configuration", link: "/reference/config" },
               { text: "Language Config", link: "/reference/languages" },
+            ],
+          },
+        ],
+        "/adr/": [
+          {
+            text: "Architecture Decisions",
+            items: [
+              { text: "001 — Cancel-token plumbing", link: "/adr/001-cancel-token-plumbing" },
+              { text: "002 — Typed ctx + hook-owned state", link: "/adr/002-typed-ctx-hook-state" },
+              { text: "003 — GBNF tool decoding", link: "/adr/003-grammar-constrained-decoding" },
             ],
           },
         ],

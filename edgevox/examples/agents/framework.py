@@ -317,21 +317,17 @@ class AgentApp:
                 stop_event = threading.Event()
 
     def _needs_agent_path(self) -> bool:
-        """Return True when this app must be driven by :class:`LLMAgent`
-        directly (skills, deps, or a custom workflow agent). Tool-only
-        apps can go through the :class:`LLM`-shim path because that now
-        delegates to :class:`LLMAgent` internally, but skills and deps
-        need the explicit ``ctx`` injection that only
-        :meth:`LLMAgent.run` performs.
+        """Always route through :class:`LLMAgent`.
+
+        Previous revisions let tools-only examples fall through to the
+        legacy ``LLM.chat_stream`` shim. That bypassed hooks, the event
+        bus, ``ctx`` injection, and parallel tool dispatch — one code
+        path for skills / deps / workflows, another for plain tools.
+        One path is simpler, more testable, and lets downstream
+        features (audit logging, memory injection, interrupt
+        plumbing) work identically for every example.
         """
-        if self.skills:
-            return True
-        if self.deps is not None:
-            return True
-        # A user-supplied top-level agent that isn't the default
-        # LLMAgent-around-tools built in __post_init__ also needs the
-        # agent path.
-        return self.agent is not None and not isinstance(self.agent, LLMAgent)
+        return True
 
     def _build_event_printer(self, console: Console):
         """Build an on_event handler that colour-codes AgentEvents in
@@ -375,26 +371,29 @@ class AgentApp:
         bot.run()
 
     def _run_tui(self, args: argparse.Namespace, console: Console) -> None:
-        if self._needs_agent_path() or self.agent is not None:
-            console.print(
-                "[yellow]⚠ Full-TUI mode does not yet propagate skills / deps "
-                "/ pre-built agents. Falling back to --simple-ui (which is "
-                "agent-aware). Use --text-mode for a keyboard-only REPL.[/]"
-            )
-            self._run_simple_voice(args, console)
-            return
-
         from edgevox.tui import EdgeVoxApp
 
         console.print(Panel.fit(f"{self.name} — launching full TUI", border_style="green"))
         _announce_model(console, args.model)
+        # Agent-aware path: when skills, deps, or a custom agent are
+        # wired we route the TUI through ``AgentProcessor`` so the full
+        # LLMAgent loop (hooks, ctx injection, handoffs, cancellable
+        # skills) runs identically to ``--simple-ui``. The legacy
+        # tools-only / no-tools path keeps using ``LLMProcessor`` so
+        # the streaming-token chat stays cheap when no agent surface
+        # is needed.
+        use_agent_path = self._needs_agent_path() or self.agent is not None
         app = EdgeVoxApp(
             llm_model=args.model,
             tts_backend=args.tts,
             voice=args.voice,
             language=args.language,
-            tools=self.tools,
-            on_tool_call=self._on_tool(console),
+            tools=None if use_agent_path else self.tools,
+            on_tool_call=None if use_agent_path else self._on_tool(console),
+            agent=self.agent if use_agent_path else None,
+            skills=self.skills if use_agent_path else None,
+            deps=self.deps if use_agent_path else None,
+            on_event=None,  # the TUI installs its own chat-panel sink
             banner_title=self.name,
         )
         app.run()

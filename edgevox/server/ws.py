@@ -245,6 +245,10 @@ def _run_text_turn_blocking(
     send_json({"type": "user_text", "text": text, "latency": 0})
     send_state("thinking")
 
+    if core.agent is not None:
+        _run_agent_turn(core, session, text, send_json, send_state, send_bytes, stt_elapsed=0.0, audio_duration=0.0)
+        return
+
     saved_history = core.llm._history
     core.llm._history = session.history
     audio_id = 0
@@ -300,6 +304,141 @@ def _run_text_turn_blocking(
             "tts": round(t_tts_total, 3),
             "total": round(t_total, 3),
             "audio_duration": 0,
+        }
+    )
+
+
+def _run_agent_turn(
+    core: ServerCore,
+    session: SessionState,
+    text: str,
+    send_json,
+    send_state,
+    send_bytes,
+    *,
+    stt_elapsed: float,
+    audio_duration: float,
+) -> None:
+    """Run one turn through :class:`LLMAgent` and drive TTS off the final reply.
+
+    Compared to the legacy ``llm.chat_stream`` path this sacrifices
+    mid-reply token streaming (``bot_token``) for the full agent
+    surface: hooks, tools, handoffs, cancellable skills, typed
+    ``ctx.deps``. Sentence-split TTS happens after generation by
+    wrapping the reply as a one-token iterator; users notice slightly
+    higher first-TTS latency on long replies but gain everything a
+    :class:`LLMAgent` does.
+
+    Tool-call events + custom domain events (``chess_state`` when
+    ``ctx.deps`` is a :class:`ChessEnvironment`) are forwarded to the
+    WebSocket client so rich UI surfaces — move list, eval bar, tool
+    trace — light up automatically.
+    """
+    from edgevox.agents import AgentContext
+
+    agent = core.agent
+    assert agent is not None  # callers gate on core.agent
+
+    t_start = time.perf_counter()
+    unsubscribers: list = []
+
+    def _on_event(event) -> None:
+        # Tool-call observability: forward both start and result to the
+        # client so the UI can animate progress + render outcomes.
+        if event.kind == "tool_call":
+            r = event.payload
+            send_json(
+                {
+                    "type": "tool_call",
+                    "name": getattr(r, "name", ""),
+                    "arguments": getattr(r, "arguments", {}),
+                    "ok": getattr(r, "ok", False),
+                    "result": getattr(r, "result", None),
+                    "error": getattr(r, "error", None),
+                }
+            )
+        elif event.kind in {"skill_goal", "skill_cancelled", "handoff", "safety_preempt"}:
+            send_json({"type": event.kind, "agent": event.agent_name, "payload": event.payload})
+
+    # Domain event: ChessEnvironment publishes ChessState snapshots after
+    # every mutation. Forward them as ``chess_state`` messages so the
+    # React ChessBoard / EvalBar / MoveList light up in real time.
+    deps = core.deps
+    if deps is not None and hasattr(deps, "subscribe") and hasattr(deps, "snapshot"):
+        try:
+
+            def _forward_chess_state(state) -> None:
+                to_json = getattr(state, "to_json", None)
+                payload = to_json() if callable(to_json) else dict(state)
+                send_json({"type": "chess_state", **payload})
+
+            deps.subscribe(_forward_chess_state)
+            # Prime with the current snapshot so a freshly-connected client
+            # sees the board immediately, not only after the first move.
+            _forward_chess_state(deps.snapshot())
+        except Exception:
+            log.exception("Failed to wire chess_state forwarder")
+
+    ctx = AgentContext(
+        session=session.agent_session,
+        deps=core.deps,
+        on_event=_on_event,
+    )
+
+    try:
+        result = agent.run(text, ctx)
+    except Exception:
+        log.exception("Agent run failed for session %s", session.id)
+        send_json({"type": "error", "message": "agent turn failed"})
+        return
+    finally:
+        for unsub in unsubscribers:
+            with contextlib.suppress(Exception):
+                unsub()
+
+    reply = (result.reply or "").strip()
+    t_llm = time.perf_counter() - t_start
+
+    # Sentence-split + TTS. We wrap the reply as a single-token iterator
+    # so ``stream_sentences`` works unchanged. Long replies get
+    # split into sentences for TTS chunking.
+    audio_id = 0
+    t_tts_total = 0.0
+    if reply:
+        send_state("speaking")
+        for sentence in stream_sentences(iter([reply])):
+            if session.interrupt_event.is_set():
+                break
+            t_tts_start = time.perf_counter()
+            audio_out = core.tts.synthesize(sentence)
+            t_tts_total += time.perf_counter() - t_tts_start
+            if session.interrupt_event.is_set():
+                break
+            sr = getattr(core.tts, "sample_rate", 24_000)
+            wav_bytes = float32_to_wav_bytes(audio_out, sr)
+            audio_id += 1
+            send_json(
+                {
+                    "type": "bot_sentence",
+                    "text": sentence,
+                    "audio_id": audio_id,
+                    "sample_rate": sr,
+                    "bytes": len(wav_bytes),
+                }
+            )
+            send_bytes(wav_bytes)
+
+    t_total = time.perf_counter() - t_start
+    send_json({"type": "bot_text", "text": reply, "latency": round(t_llm, 3)})
+    send_json(
+        {
+            "type": "metrics",
+            "stt": round(stt_elapsed, 3),
+            "llm": round(t_llm - t_tts_total, 3),
+            "ttft": round(t_llm, 3),
+            "tts": round(t_tts_total, 3),
+            "total": round(t_total + stt_elapsed, 3),
+            "audio_duration": round(audio_duration, 3),
         }
     )
 
@@ -391,6 +530,19 @@ def _run_turn_blocking(
 
     send_json({"type": "user_text", "text": text, "latency": round(t_stt, 3)})
     send_state("thinking")
+
+    if core.agent is not None:
+        _run_agent_turn(
+            core,
+            session,
+            text,
+            send_json,
+            send_state,
+            send_bytes,
+            stt_elapsed=t_stt,
+            audio_duration=float(SessionState.segment_duration(audio)),
+        )
+        return
 
     # Swap this session's history into the shared LLM under the lock.
     saved_history = core.llm._history

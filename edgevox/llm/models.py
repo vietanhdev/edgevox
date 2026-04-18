@@ -251,11 +251,36 @@ def list_presets() -> list[ModelPreset]:
 
 
 def resolve_preset(slug: str) -> ModelPreset:
-    """Return the preset for ``slug`` or raise ``KeyError`` with known names."""
-    if slug in PRESETS:
-        return PRESETS[slug]
-    known = ", ".join(PRESETS)
-    raise KeyError(f"Unknown LLM preset '{slug}'. Known presets: {known}")
+    """Return the preset for ``slug`` or raise ``KeyError`` with known names.
+
+    Also validates ``preset.tool_call_parsers`` against the detector
+    registry so a typo in a preset fails loudly instead of silently
+    skipping detection.
+    """
+    if slug not in PRESETS:
+        known = ", ".join(PRESETS)
+        raise KeyError(f"Unknown LLM preset '{slug}'. Known presets: {known}")
+    preset = PRESETS[slug]
+    _validate_preset_parsers(preset)
+    return preset
+
+
+def _validate_preset_parsers(preset: ModelPreset) -> None:
+    """Ensure every name in ``preset.tool_call_parsers`` is a registered
+    detector. Mis-named parsers silently no-op at runtime otherwise —
+    the detector chain just skips them and the preset behaves as if
+    it had no parsers at all."""
+    if not preset.tool_call_parsers:
+        return
+    # Import locally to avoid a circular import at module load time.
+    from edgevox.llm.tool_parsers import DETECTORS
+
+    unknown = [name for name in preset.tool_call_parsers if name not in DETECTORS]
+    if unknown:
+        known = ", ".join(sorted(DETECTORS))
+        raise ValueError(
+            f"Preset '{preset.slug}' references unknown tool-call parser(s): {unknown}. Known detectors: {known}."
+        )
 
 
 def download_preset(slug: str) -> str:

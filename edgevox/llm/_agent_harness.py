@@ -77,10 +77,24 @@ def looks_like_echoed_payload(text: str) -> bool:
     internal keys (``retry_hint``, ``ok``, ``error``, ``you_sent``,
     ``expected_schema``). Used to swap a leaked payload for a
     human-friendly message before the reply reaches TTS.
+
+    Handles the common SLM variant of wrapping the echoed payload in a
+    ``json``/``tool_call``/unlabelled triple-backtick fence before
+    emitting it — without this stripping, the heuristic misses the
+    ``"starts with '{'"`` check and the payload leaks through to TTS.
     """
     if not text:
         return False
     stripped = text.strip()
+    # Strip a leading markdown fence (```json / ```tool_call / ```) so the
+    # body-starts-with-'{' check matches fenced echoed payloads too.
+    if stripped.startswith("```"):
+        # Drop the opening fence line.
+        _, _, rest = stripped.partition("\n")
+        stripped = rest.strip()
+        # Drop the closing fence if present.
+        if stripped.endswith("```"):
+            stripped = stripped[: -len("```")].rstrip()
     if not stripped.startswith("{"):
         return False
     markers = ('"retry_hint"', '"ok":', '"error":', '"you_sent"', '"expected_schema"')
