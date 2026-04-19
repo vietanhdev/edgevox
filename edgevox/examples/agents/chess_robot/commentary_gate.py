@@ -69,22 +69,110 @@ log = logging.getLogger(__name__)
 _QUIET_STREAK_LIMIT = 3
 
 
+# Templated game-end lines per (persona, outcome). Game-over results are
+# fully determined facts (winner, reason) — letting an LLM phrase them
+# was where attribution failures clustered: small models said "I'll
+# keep playing" after being mated, claimed "you missed it" to the
+# winner, or echoed the SAN. Replacing that turn with a hand-written
+# persona-appropriate line eliminates the failure mode at zero LLM
+# cost. The gate fires ``HookResult.end(line)`` so the agent loop
+# short-circuits — no model call.
+#
+# ``canned_game_end_index`` on ``ctx.session.state`` rotates picks so
+# back-to-back games don't repeat the same closer.
+_GAME_END_LINES: dict[str, dict[str, tuple[str, ...]]] = {
+    "casual": {
+        "won": (
+            "GG! That was a fun one.",
+            "Got you. Nice game.",
+            "Mate. Tough luck.",
+            "And that's the game — well played.",
+        ),
+        "lost": (
+            "You got me. Well played!",
+            "Nice finish — GG.",
+            "Clean win, congrats.",
+            "That was sharp. Good game.",
+        ),
+        "draw": (
+            "Draw it is. Even match.",
+            "Stalemate — fair enough.",
+            "Half a point each, then.",
+        ),
+    },
+    "grandmaster": {
+        "won": (
+            "Mate. Well played.",
+            "Game.",
+            "An instructive finish.",
+            "And that concludes the game.",
+        ),
+        "lost": (
+            "A fine game. Congratulations.",
+            "Well played. Resigning.",
+            "Excellent finish.",
+        ),
+        "draw": (
+            "A draw. Reasonable conclusion.",
+            "Half a point each.",
+        ),
+    },
+    "trash_talker": {
+        "won": (
+            "Easy. Don't sweat it.",
+            "And that's the game! Better luck next time.",
+            "Mate. Try harder.",
+            "Tag, you're it. GG.",
+        ),
+        "lost": (
+            "You got me. This time.",
+            "Ugh, fine. Well played.",
+            "Lucky shot. I'll be back.",
+        ),
+        "draw": (
+            "A draw. Boring.",
+            "Stalemate, huh? Anticlimactic.",
+        ),
+    },
+}
+
+
 class CommentaryGateHook:
     """Gate Rook's speech on real board signals.
 
     Reads the post-move snapshot (``MoveInterceptHook`` ran at
     priority 90) and decides whether Rook has something grounded to
     say. Silent turns terminate the run without ever invoking the LLM.
+
+    ``persona`` selects the canned game-end line set. The bridge
+    passes the same persona it uses to compose system instructions
+    so closers feel consistent with the rest of Rook's voice.
     """
 
     points = frozenset({ON_RUN_START})
     priority = 85
+
+    def __init__(self, *, persona: str = "casual") -> None:
+        self.persona = persona
 
     def __call__(self, point: str, ctx: AgentContext, payload: Any) -> HookResult | None:
         env = _chess_env(ctx)
         if env is None:
             return None  # Fail open: no env, let the LLM run normally.
         state = env.snapshot()
+        # Game over is 100% deterministic — winner / reason are facts,
+        # not interpretations. Skip the LLM entirely and emit a canned
+        # persona line. Eliminates the attribution failures small
+        # models hit on game-over (claiming "I'll keep playing" after
+        # being mated, etc.) at zero inference cost.
+        if state.is_game_over:
+            line = _canned_game_end(state, env, ctx.session.state, self.persona)
+            ctx.emit(
+                "commentary_gate",
+                getattr(ctx, "agent_name", None) or "rook",
+                {"decision": "canned-game-end", "line": line},
+            )
+            return HookResult.end(line, reason="canned game-end reply")
         current_ply = len(state.san_history)
         last_gate_ply = ctx.session.state.get("last_gate_ply")
         if last_gate_ply is not None and current_ply == last_gate_ply:
@@ -196,29 +284,12 @@ def _build_ground_truth(
     the current game. ``clear_memory`` wipes the session, so a new
     game starts ungreeted even within the same app process.
     """
-    # 1. Game over — always speak. Small models can't deduce "black
-    # wins" → "I won" when Rook plays black, so we state the outcome
-    # from Rook's POV in plain English.
-    if state.is_game_over:
-        winner = (state.winner or "").lower()
-        if winner == env.engine_plays.lower():
-            outcome_line = "I WON the game"
-            react = "I celebrate in persona — gloat, salute, trash-talk, grin"
-        elif winner == env.user_plays.lower():
-            outcome_line = "I LOST the game"
-            react = "I concede in persona — graceful, rueful, or defiant; never pretend I'm winning"
-        else:
-            outcome_line = "The game ended in a draw"
-            react = "I react in persona to the draw — wry, respectful, whatever fits"
-        return (
-            f"{_role_header(env)}\n"
-            f"GAME OVER — {state.game_over_reason}, {winner or 'draw'}. "
-            f"FROM MY POV: {outcome_line}. {react}. One short punchy sentence, "
-            f"never a recap. I do NOT say my position is bad if I won, "
-            f"or that I'm winning if I lost."
-        )
+    # Game-over is handled in the gate's ``__call__`` via canned
+    # persona lines (``HookResult.end``) — by the time we reach this
+    # builder the run is alive and the LLM is going to be asked to
+    # speak, so we only handle the not-game-over path here.
 
-    # 2. Opening greeting. By the time this hook runs, MoveInterceptHook
+    # Opening greeting. By the time this hook runs, MoveInterceptHook
     # has already applied the user's move AND the engine's reply, so
     # ``san_history`` is never empty on a normal turn. We gate on a
     # persistent ``greeted`` flag in session state instead — cleared on
@@ -264,12 +335,16 @@ def _build_ground_truth(
         or (engine_san and (engine_san.endswith("+") or engine_san.endswith("#")))
     )
     has_promotion = bool((user_san and "=" in user_san) or (engine_san and "=" in engine_san))
+    has_castle = bool(
+        (user_san and user_san.rstrip("+#") in ("O-O", "O-O-O"))
+        or (engine_san and engine_san.rstrip("+#") in ("O-O", "O-O-O"))
+    )
     has_notable_classification = cls in (
         MoveClassification.BLUNDER,
         MoveClassification.MISTAKE,
         MoveClassification.INACCURACY,
     )
-    if not (has_capture or has_check or has_promotion or has_notable_classification):
+    if not (has_capture or has_check or has_promotion or has_castle or has_notable_classification):
         return None
 
     facts: list[str] = []
@@ -871,6 +946,33 @@ def _split_last_pair(san_history: list[str], engine_plays: str) -> tuple[str | N
     # History of length 1 and engine plays last — engine opened, no
     # user move yet (shouldn't happen on a post-user-move snapshot).
     return (None, san_history[-1])
+
+
+def _canned_game_end(
+    state: ChessState,
+    env: ChessEnvironment,
+    session_state: dict[str, Any],
+    persona: str,
+) -> str:
+    """Pick a templated game-end reply for ``persona`` and outcome.
+
+    Rotates through the available phrasings via a counter on
+    ``session_state`` so back-to-back games (or the same game replayed
+    in tests) don't always close the same way. Falls back to the
+    casual set when ``persona`` isn't recognised.
+    """
+    winner = (state.winner or "").lower()
+    if winner == env.engine_plays.lower():
+        outcome = "won"
+    elif winner == env.user_plays.lower():
+        outcome = "lost"
+    else:
+        outcome = "draw"
+    bucket = _GAME_END_LINES.get(persona) or _GAME_END_LINES["casual"]
+    lines = bucket.get(outcome) or _GAME_END_LINES["casual"][outcome]
+    idx = int(session_state.get("canned_game_end_index", 0)) % len(lines)
+    session_state["canned_game_end_index"] = idx + 1
+    return lines[idx]
 
 
 def _chess_env(ctx: AgentContext) -> ChessEnvironment | None:

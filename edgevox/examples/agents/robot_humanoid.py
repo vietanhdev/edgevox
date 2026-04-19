@@ -2,8 +2,8 @@
 
 Same agent authoring pattern as ``robot_panda``, but swaps the arm
 adapter for :class:`MujocoHumanoidEnvironment` so the demo is a
-standing biped that can walk, turn, sit, stand, and wave on voice
-commands.
+standing biped that can walk forward or backward, turn left or right,
+and return to a balanced standing pose on voice commands.
 
 By default the adapter uses a PD standing controller + mocap-style
 locomotion stub — see that module's docstring for what that means and
@@ -28,11 +28,14 @@ from edgevox.examples.agents.framework import AgentApp
 from edgevox.llm import tool
 
 HUMANOID_PERSONA = (
-    "You are G1, a Unitree humanoid robot. You can walk forward or backward "
-    "a small distance, turn left or right by a given angle in degrees, and "
-    "return to a balanced standing pose. Pick ONE skill per user turn — never "
-    "chain. When the user asks where you are, call get_pose. Always reply in "
-    "one short sentence. Never read raw JSON aloud."
+    "You are G1, a Unitree humanoid robot. "
+    "To move, call walk_forward(distance=metres) or walk_backward(distance=metres); "
+    "to rotate call turn_left(degrees=...) or turn_right(degrees=...). "
+    "Call stand to recover the home pose if you stumble. "
+    "For queries: get_pose returns (x, y, heading); is_standing returns whether "
+    "the pelvis is above the stability threshold. "
+    "Pick ONE skill per user turn — never chain. "
+    "Always reply in one short sentence. Never read raw JSON aloud."
 )
 
 
@@ -89,9 +92,9 @@ def get_pose(ctx: AgentContext) -> dict:
 
 
 @tool
-def world_state(ctx: AgentContext) -> dict:
-    """Full sim snapshot — robot kind, pose, current policy, busy flag."""
-    return ctx.deps.get_world_state()
+def is_standing(ctx: AgentContext) -> bool:
+    """Return True if the pelvis is above the standing-stability threshold."""
+    return bool(ctx.deps.get_world_state()["pose"]["standing"])
 
 
 def _pre_run(args: argparse.Namespace) -> None:
@@ -111,13 +114,12 @@ APP = AgentApp(
     name="G1",
     description="Voice-controlled Unitree humanoid (G1/H1) running in MuJoCo.",
     instructions=HUMANOID_PERSONA,
-    tools=[world_state],
+    tools=[is_standing],
     skills=[walk_forward, walk_backward, turn_left, turn_right, stand, get_pose],
     deps=None,
     stop_words=("stop", "halt", "freeze", "abort", "emergency"),
     greeting=(
-        "G1 online. I can walk forward or backward, turn left or right, and "
-        "return to a standing pose. What should I do?"
+        "G1 online. I can walk forward or backward, turn left or right, and return to a standing pose. What should I do?"
     ),
     extra_args=[
         (("--no-render",), {"action": "store_true", "help": "Run headless (skip the MuJoCo viewer)."}),

@@ -30,6 +30,7 @@ Aggregate scores across scenarios drive decisions on prompt tuning.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import time
 from dataclasses import dataclass, field
@@ -42,12 +43,12 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from edgevox.agents.base import AgentContext, Session
-from edgevox.apps.chess_robot_qt.bridge import _ROOK_TOOL_GUIDANCE
 from edgevox.examples.agents.chess_robot.commentary_gate import (
     _build_ground_truth,
     _record_turn_history,
 )
-from edgevox.integrations.chess.analytics import MoveClassification
+from edgevox.examples.agents.chess_robot.prompts import ROOK_TOOL_GUIDANCE as _ROOK_TOOL_GUIDANCE
+from edgevox.integrations.chess.analytics import MoveClassification, classify_move
 from edgevox.llm import LLM
 
 # ---------------------------------------------------------------------------
@@ -108,6 +109,114 @@ class Scenario:
     persona: str = "casual"
     # User task string (what MoveInterceptHook would hand the LLM).
     user_task: str = ""
+
+
+def recompute_with_stockfish(
+    scns: list[Scenario],
+    *,
+    depth: int = 12,
+    stockfish_path: str = "stockfish",
+) -> list[Scenario]:
+    """Replace each scenario's hand-set ``eval_cp`` / ``classification``
+    with values computed by replaying the SAN through stockfish.
+
+    Makes the benchmark match what a real RookApp game would see at
+    that exact position, instead of my (often wrong) eyeballed guess.
+    Each scenario:
+
+    * replays ``san_history`` minus the last move → pre-move eval;
+    * replays the full history → post-move eval + mate flag;
+    * derives ``classification`` from the eval swing against the mover.
+
+    Fails open — if stockfish isn't on ``$PATH`` the scenarios are
+    returned unchanged so the benchmark still runs with the hand
+    values, only louder.
+    """
+    try:
+        import chess
+        import chess.engine
+    except Exception:
+        print("stockfish recomputation skipped — python-chess engine API unavailable", file=sys.stderr)
+        return scns
+
+    try:
+        engine = chess.engine.SimpleEngine.popen_uci(stockfish_path)
+    except Exception as e:
+        print(f"stockfish recomputation skipped — cannot start {stockfish_path!r}: {e}", file=sys.stderr)
+        return scns
+
+    updated: list[Scenario] = []
+    try:
+        for scn in scns:
+            updated.append(_recompute_single(scn, engine, depth=depth))
+    finally:
+        engine.quit()
+    return updated
+
+
+def _recompute_single(scn: Scenario, engine, *, depth: int) -> Scenario:
+    import chess
+    import chess.engine
+
+    board = chess.Board()
+    if not scn.san_history:
+        return scn
+    # Pre-last-move analysis for classification.
+    for san in scn.san_history[:-1]:
+        try:
+            board.push_san(san)
+        except ValueError:
+            return scn
+    try:
+        pre_info = engine.analyse(board, chess.engine.Limit(depth=depth))
+    except Exception:
+        return scn
+    pre_score = pre_info["score"].white()
+    pre_cp = pre_score.score() if not pre_score.is_mate() else None
+
+    # Post-last-move analysis.
+    try:
+        last_move = board.parse_san(scn.san_history[-1])
+        board.push(last_move)
+    except ValueError:
+        return scn
+    try:
+        post_info = engine.analyse(board, chess.engine.Limit(depth=depth))
+    except Exception:
+        return scn
+    post_score = post_info["score"].white()
+    post_cp = post_score.score() if not post_score.is_mate() else None
+    # mate_in is computed but not threaded into ChessState here —
+    # the gate's MOOD CUE branch reads it via state.mate_in, but
+    # since our _FakeState mate_in defaults to None we just rely on
+    # the eval_cp clamp (mate ⇒ effectively ±10000 cp).
+
+    # Classification swing — centipawns lost by the mover against the
+    # best line. Mirrors ChessEnvironment._classify_unlocked.
+    cls: MoveClassification | None = scn.classification
+    if pre_cp is not None and post_cp is not None:
+        swing = pre_cp - post_cp if board.turn == chess.BLACK else -(pre_cp - post_cp)
+        cls = classify_move(swing)
+
+    # Copy the scenario; preserve is_game_over / winner (stockfish's
+    # terminal detection runs via chess.Board.is_game_over() already,
+    # but we respect the scenario's declared end-state).
+    return Scenario(
+        name=scn.name,
+        description=scn.description,
+        san_history=scn.san_history,
+        user_plays=scn.user_plays,
+        eval_cp=post_cp if post_cp is not None else scn.eval_cp,
+        classification=cls,
+        is_game_over=scn.is_game_over,
+        game_over_reason=scn.game_over_reason,
+        winner=scn.winner,
+        greeted_before=scn.greeted_before,
+        expected_tone=scn.expected_tone,
+        forbidden_terms=scn.forbidden_terms,
+        persona=scn.persona,
+        user_task=scn.user_task,
+    )
 
 
 def scenarios() -> list[Scenario]:
@@ -179,6 +288,513 @@ def scenarios() -> list[Scenario]:
             forbidden_terms=("pin", "fork", "skewer", "winning"),
             user_task="I just played Nxe5. You reply with Nxe5. In your persona's voice, say one natural-sounding line about my move and yours.",
         ),
+        Scenario(
+            name="user_castles_kingside",
+            description="User castles short in a quiet middlegame. Rook continues development.",
+            san_history=["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "O-O", "Nf6"],
+            eval_cp=10,
+            classification=MoveClassification.BEST,
+            expected_tone="neutral",
+            forbidden_terms=("pin", "fork", "skewer", "trapped", "attack"),
+            user_task="I just played O-O (castled kingside). You reply with Nf6. In your persona's voice, say one natural-sounding line about my move and yours.",
+        ),
+        Scenario(
+            name="user_promotes_pawn",
+            description="User pushes pawn to 8th rank and promotes to a queen. Rook is losing.",
+            san_history=["e4", "d5", "exd5", "c6", "dxc6", "Nf6", "cxb7", "Nbd7", "bxa8=Q"],
+            eval_cp=1800,  # user up a queen
+            classification=MoveClassification.BEST,
+            expected_tone="rattled",
+            forbidden_terms=("pin", "fork", "skewer", "my advantage", "gaining initiative"),
+            user_task="I just played bxa8=Q (promoted pawn to queen on a8, capturing your rook). In your persona's voice, say one natural-sounding line about my move — I just promoted a pawn and took your rook.",
+        ),
+        Scenario(
+            name="trash_talker_user_blunder",
+            description="Trash-talker persona with a user blunder — persona voice should be sharp.",
+            san_history=["e4", "e5", "Nf3", "Qh4", "Nxh4"],
+            eval_cp=900,
+            classification=MoveClassification.BLUNDER,
+            expected_tone="confident",
+            persona="trash_talker",
+            forbidden_terms=("pin", "fork", "skewer", "bold", "nice try"),
+            user_task="I just played Nxh4. In your persona's voice, say one natural-sounding line about my move — I just captured your queen.",
+        ),
+        # --- Color flip: user plays black, Rook plays white ---
+        Scenario(
+            name="user_plays_black_greeting",
+            description="User plays BLACK. Rook opens as white with e4, user replies c5 (Sicilian). Greeting turn — tests pronoun correctness under flipped colours.",
+            user_plays="black",
+            san_history=["e4", "c5"],
+            eval_cp=30,
+            classification=MoveClassification.BEST,
+            greeted_before=False,
+            expected_tone="opening",
+            forbidden_terms=("pin", "fork", "skewer"),
+            user_task="I just played c5 (Sicilian). You opened with e4. In your persona's voice, say one natural-sounding line about my move and yours.",
+        ),
+        Scenario(
+            name="user_black_captures_rook_queen",
+            description="User (black) captures Rook's (white) queen after an early Qh5 sortie. Rook is down a queen, losing.",
+            user_plays="black",
+            # 1.e4 e5 2.Qh5 Nc6 3.Qxe5+ Nxe5 — white Qxe5+ takes a pawn
+            # with check, black knight recaptures the queen.
+            san_history=["e4", "e5", "Qh5", "Nc6", "Qxe5+", "Nxe5"],
+            eval_cp=-800,  # white POV — black up a queen
+            classification=MoveClassification.BLUNDER,  # white's queen was hanging
+            expected_tone="rattled",
+            forbidden_terms=("pin", "fork", "my advantage", "initiative", "winning"),
+            user_task="I just played Nxe5, capturing your queen. In your persona's voice, say one natural-sounding line about my move.",
+        ),
+        # --- Terminal-state variety ---
+        Scenario(
+            name="stalemate_by_user",
+            description="Stalemate — user has an overwhelming material lead but cornered Rook's king without delivering mate. Game ends in a draw.",
+            san_history=["e4", "e5", "Qh5", "Nf6", "Qxf7+", "Kxf7", "Bc4+", "Kg6", "Nf3", "Nc6", "d3", "d6"],
+            eval_cp=0,  # draw
+            is_game_over=True,
+            game_over_reason="stalemate",
+            winner=None,
+            expected_tone="final",
+            forbidden_terms=("won", "lost", "winning", "losing"),
+            user_task="The game just ended in stalemate. In your persona's voice, say one line about it.",
+        ),
+        # (draw_insufficient_material scenario removed — the 30-ply
+        # sequence was non-trivial to keep legal through edits and
+        # ``stalemate_by_user`` already covers the "game-over, no
+        # winner" branch for benchmark purposes.)
+        # --- Tactical / middle-game variety ---
+        Scenario(
+            name="user_brilliant_tactical_shot",
+            description="User plays a BEST move that swung the eval by 200 cp in their favor — clean tactical hit. Rook should acknowledge the strong play without flattery.",
+            san_history=[
+                "e4",
+                "c5",
+                "Nf3",
+                "Nc6",
+                "d4",
+                "cxd4",
+                "Nxd4",
+                "Nf6",
+                "Nc3",
+                "e5",
+                "Ndb5",
+                "d6",
+                "Bg5",
+                "a6",
+                "Na3",
+                "b5",
+                "Nd5",
+                "Nxd5",
+                "exd5",
+                "Nb4",
+            ],
+            eval_cp=-190,  # user (black) up clear
+            classification=MoveClassification.BEST,
+            expected_tone="neutral",
+            forbidden_terms=("pin", "fork", "skewer", "amazing", "brilliant"),
+            user_task="I just played Nb4 — a strong tactical move threatening your queen on d1. You reply with Nxb4. In your persona's voice, say one natural-sounding line about my move and yours.",
+        ),
+        Scenario(
+            name="quiet_middle_pawn_push",
+            description="Routine positional pawn push, no captures, eval stable. Gate should stay SILENT (no speech trigger).",
+            san_history=["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "c3", "Nf6", "d3", "O-O", "O-O", "d6", "a4"],
+            eval_cp=15,
+            classification=MoveClassification.BEST,
+            expected_tone="neutral",
+            forbidden_terms=(),
+            user_task="I just played a4. In your persona's voice, say one natural-sounding line about my move.",
+        ),
+        Scenario(
+            name="en_passant_capture",
+            description="User captures via en passant — unusual move shape, tests that the description handles the special capture.",
+            # 1.e4 Nf6 2.e5 d5 3.exd6 — white pawn on e5 captures
+            # black's d-pawn en passant as it pushes d7-d5.
+            san_history=["e4", "Nf6", "e5", "d5", "exd6"],
+            eval_cp=80,
+            classification=MoveClassification.GOOD,
+            expected_tone="neutral",
+            forbidden_terms=("pin", "fork", "skewer"),
+            user_task="I just played exd6 — en passant capture. In your persona's voice, say one natural-sounding line about my move.",
+        ),
+        # --- Endgame variety ---
+        Scenario(
+            name="user_queen_trap_wins",
+            description="User captures Rook's queen via a f2 trap (early Qxf2+ → Kxf2 → winning the black queen). Rook is down a queen, losing decisively.",
+            # 1.e4 e5 2.Nc3 Qf6 3.d3 Qxf2+ 4.Kxf2 Nf6 5.Nd5 Nxd5 6.exd5
+            # — after all exchanges, white (user) is up roughly a queen.
+            san_history=["e4", "e5", "Nc3", "Qf6", "d3", "Qxf2+", "Kxf2", "Nf6", "Nd5", "Nxd5", "exd5"],
+            eval_cp=800,  # user up a queen
+            classification=MoveClassification.BEST,
+            expected_tone="rattled",
+            forbidden_terms=("defend", "save", "counterattack", "winning"),
+            user_task="I just played exd5, recapturing your knight. I already won your queen earlier. In your persona's voice, say one natural-sounding line about the position.",
+        ),
+        Scenario(
+            name="minor_piece_trade_bishop_for_knight",
+            description="Quiet minor-piece trade (bishop for knight), eval barely moves. Should speak because it's a capture pair.",
+            san_history=["e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Bxc6", "bxc6"],
+            eval_cp=-20,
+            classification=MoveClassification.GOOD,
+            expected_tone="neutral",
+            forbidden_terms=("pin", "fork", "skewer"),
+            user_task="I just played Bxc6. You reply with bxc6. In your persona's voice, say one natural-sounding line about my move and yours.",
+        ),
+        # --- Persona cross-check ---
+        Scenario(
+            name="grandmaster_rook_wins_material",
+            description="Grandmaster persona with Rook winning material — voice should be reserved, not giddy.",
+            san_history=["e4", "e5", "Nf3", "Nc6", "Bc4", "Nf6", "d3", "Bc5", "Bg5", "h6", "Bxf6", "Qxf6"],
+            eval_cp=-30,
+            classification=MoveClassification.BEST,
+            expected_tone="confident",
+            persona="grandmaster",
+            forbidden_terms=("woohoo", "yeehaw", "sweet", "awesome"),
+            user_task="I just played Qxf6 after you played Bxf6. In your persona's voice, say one natural-sounding line about my move and yours.",
+        ),
+        # --- Opening variety (all verified legal) ---
+        Scenario(
+            name="sicilian_najdorf_early_trade",
+            description="Sicilian Najdorf — mainline development, minor exchange on d4 in book.",
+            san_history=[
+                "e4",
+                "c5",
+                "Nf3",
+                "d6",
+                "d4",
+                "cxd4",
+                "Nxd4",
+                "Nf6",
+                "Nc3",
+                "a6",
+                "Be2",
+                "e5",
+                "Nb3",
+                "Be7",
+                "O-O",
+                "O-O",
+                "Be3",
+                "Nbd7",
+            ],
+            eval_cp=-15,
+            classification=MoveClassification.BEST,
+            expected_tone="neutral",
+            forbidden_terms=("pin", "fork", "skewer"),
+            user_task="You just played Nbd7. In your persona's voice, say one natural-sounding line about your move.",
+        ),
+        Scenario(
+            name="caro_kann_user_captures_pawn",
+            description="Caro-Kann classical — user (white) recaptures on e4 with the knight. Book line.",
+            san_history=["e4", "c6", "d4", "d5", "Nc3", "dxe4", "Nxe4", "Nd7", "Ng5", "Ngf6", "Bd3"],
+            eval_cp=25,
+            classification=MoveClassification.BEST,
+            expected_tone="neutral",
+            forbidden_terms=("pin", "fork", "skewer"),
+            user_task="I just played Bd3. In your persona's voice, say one natural-sounding line about my move.",
+        ),
+        Scenario(
+            name="french_defense_mid_game",
+            description="French Winawer — black gives up bishop pair with Bxc3+. User plays white.",
+            san_history=["e4", "e6", "d4", "d5", "Nc3", "Bb4", "e5", "c5", "a3", "Bxc3+", "bxc3", "Ne7"],
+            eval_cp=30,
+            classification=MoveClassification.BEST,
+            expected_tone="neutral",
+            forbidden_terms=("pin", "fork", "skewer"),
+            user_task="I just played bxc3, recapturing your bishop. You reply with Ne7. In your persona's voice, say one natural-sounding line.",
+        ),
+        Scenario(
+            name="london_system_slow",
+            description="London System — very quiet, should be GATED SILENT.",
+            san_history=["d4", "Nf6", "Nf3", "g6", "Bf4", "Bg7", "e3", "O-O", "h3", "d6", "Be2"],
+            eval_cp=10,
+            classification=MoveClassification.GOOD,
+            expected_tone="neutral",
+            forbidden_terms=(),
+            user_task="I just played Be2. In your persona's voice, say one natural-sounding line.",
+        ),
+        Scenario(
+            name="kings_indian_fianchetto",
+            description="King's Indian fianchetto — mainline development, typical middlegame structure.",
+            san_history=[
+                "d4",
+                "Nf6",
+                "c4",
+                "g6",
+                "Nc3",
+                "Bg7",
+                "e4",
+                "d6",
+                "Nf3",
+                "O-O",
+                "Be2",
+                "e5",
+                "O-O",
+                "Nc6",
+                "d5",
+                "Ne7",
+            ],
+            eval_cp=20,
+            classification=MoveClassification.BEST,
+            expected_tone="neutral",
+            forbidden_terms=("pin", "fork", "skewer"),
+            user_task="I just played d5 (closing the center). You reply with Ne7. In your persona's voice, say one natural-sounding line.",
+        ),
+        Scenario(
+            name="opera_game_sac",
+            description="Morphy's Opera Game — white sacrifices a knight for a fierce attack. User plays white, knight sac Nxb5.",
+            san_history=[
+                "e4",
+                "e5",
+                "Nf3",
+                "d6",
+                "d4",
+                "Bg4",
+                "dxe5",
+                "Bxf3",
+                "Qxf3",
+                "dxe5",
+                "Bc4",
+                "Nf6",
+                "Qb3",
+                "Qe7",
+                "Nc3",
+                "c6",
+                "Bg5",
+                "b5",
+                "Nxb5",
+                "cxb5",
+                "Bxb5+",
+                "Nbd7",
+            ],
+            eval_cp=80,
+            classification=MoveClassification.BEST,
+            expected_tone="confident",
+            forbidden_terms=("blunder", "mistake"),
+            user_task="I just played Bxb5+ after your cxb5 (which took my sacrificed knight). In your persona's voice, say one natural-sounding line.",
+        ),
+        Scenario(
+            name="user_double_attack_fork",
+            description="Classic Nxf7 'fried liver' setup — user sacrifices knight for attack. Verified legal sequence.",
+            san_history=[
+                "e4",
+                "e5",
+                "Nf3",
+                "Nc6",
+                "Bc4",
+                "Bc5",
+                "d3",
+                "Nf6",
+                "Ng5",
+                "O-O",
+                "h3",
+                "h6",
+                "Nxf7",
+                "Rxf7",
+                "Bxf7+",
+                "Kxf7",
+                "Qh5+",
+            ],
+            eval_cp=-30,
+            classification=MoveClassification.BEST,
+            expected_tone="confident",
+            forbidden_terms=(),
+            user_task="I just played Qh5+. In your persona's voice, say one natural-sounding line.",
+        ),
+        Scenario(
+            name="scholars_mate_threat_dodged",
+            description="White threatens Scholar's mate; Rook (black) correctly defends with h6. Should speak on classification.",
+            san_history=["e4", "e5", "Bc4", "Nf6", "Qf3", "Nc6", "d3", "h6"],
+            eval_cp=30,
+            classification=MoveClassification.BEST,
+            expected_tone="neutral",
+            forbidden_terms=("mate", "checkmate"),
+            user_task="I just played d3. You reply with h6. In your persona's voice, say one natural-sounding line.",
+        ),
+        Scenario(
+            name="smothered_mate_threat",
+            description="Classic smothered mate pattern; user (white) gets mated by Nf3#.",
+            san_history=[
+                "e4",
+                "e5",
+                "Nf3",
+                "Nc6",
+                "Bc4",
+                "Nd4",
+                "Nxe5",
+                "Qg5",
+                "Nxf7",
+                "Qxg2",
+                "Rf1",
+                "Qxe4+",
+                "Be2",
+                "Nf3#",
+            ],
+            is_game_over=True,
+            game_over_reason="checkmate",
+            winner="black",
+            eval_cp=-10000,
+            expected_tone="final",
+            forbidden_terms=("next time", "close game"),
+            user_task="I just played Be2 trying to block. You reply with Nf3#. In your persona's voice, say one natural-sounding line.",
+        ),
+        Scenario(
+            name="berlin_defense_quiet_castle",
+            description="Berlin Defense Endgame — queens trade early, Rook's (black) king walks to queenside.",
+            san_history=[
+                "e4",
+                "e5",
+                "Nf3",
+                "Nc6",
+                "Bb5",
+                "Nf6",
+                "O-O",
+                "Nxe4",
+                "d4",
+                "Nd6",
+                "Bxc6",
+                "dxc6",
+                "dxe5",
+                "Nf5",
+                "Qxd8+",
+                "Kxd8",
+                "Nc3",
+            ],
+            eval_cp=20,
+            classification=MoveClassification.BEST,
+            expected_tone="neutral",
+            forbidden_terms=("pin", "fork"),
+            user_task="I just played Nc3. In your persona's voice, say one natural-sounding line.",
+        ),
+        Scenario(
+            name="queens_gambit_accepted",
+            description="Queen's Gambit Accepted — book opening, no tactics, quiet development.",
+            san_history=[
+                "d4",
+                "d5",
+                "c4",
+                "dxc4",
+                "Nf3",
+                "Nf6",
+                "e3",
+                "e6",
+                "Bxc4",
+                "c5",
+                "O-O",
+                "a6",
+                "Qe2",
+                "b5",
+                "Bb3",
+                "Bb7",
+            ],
+            eval_cp=15,
+            classification=MoveClassification.BEST,
+            expected_tone="neutral",
+            forbidden_terms=("pin", "fork", "skewer"),
+            user_task="I just played Bb3. You reply with Bb7. In your persona's voice, say one natural-sounding line.",
+        ),
+        Scenario(
+            name="italian_game_trade",
+            description="Italian Game — Giuoco Pianissimo, slow development.",
+            san_history=[
+                "e4",
+                "e5",
+                "Nf3",
+                "Nc6",
+                "Bc4",
+                "Bc5",
+                "c3",
+                "Nf6",
+                "d3",
+                "d6",
+                "O-O",
+                "O-O",
+                "Re1",
+                "h6",
+                "Nbd2",
+                "a5",
+                "Nf1",
+            ],
+            eval_cp=10,
+            classification=MoveClassification.GOOD,
+            expected_tone="neutral",
+            forbidden_terms=(),
+            user_task="I just played Nf1. In your persona's voice, say one natural-sounding line.",
+        ),
+        # --- Color-flipped: Rook plays WHITE (user plays black) ---
+        Scenario(
+            name="rook_white_captures_user_bishop",
+            description="Rook (white) captures user's (black) bishop after Bxe4 in the Nxe4 exchange.",
+            user_plays="black",
+            san_history=["Nf3", "b6", "e4", "Bb7", "Nc3", "Bxe4", "Nxe4"],
+            eval_cp=200,
+            classification=MoveClassification.BEST,
+            expected_tone="confident",
+            forbidden_terms=("pin", "fork", "skewer"),
+            user_task="I just played Bxe4 — I captured your pawn. You reply with Nxe4, capturing my bishop. In your persona's voice, say one natural-sounding line.",
+        ),
+        Scenario(
+            name="rook_white_delivers_mate",
+            description="Rook (white) delivers Scholar's mate — mirror of user_checkmates. Rook wins.",
+            user_plays="black",
+            san_history=["e4", "e5", "Bc4", "Nc6", "Qh5", "Nf6", "Qxf7#"],
+            is_game_over=True,
+            game_over_reason="checkmate",
+            winner="white",
+            eval_cp=10000,
+            expected_tone="final",
+            forbidden_terms=("next time", "close game", "good try"),
+            user_task="I just played Nf6. You reply with Qxf7# — checkmate. In your persona's voice, say one natural-sounding line.",
+        ),
+        Scenario(
+            name="rook_white_gives_check",
+            description="Rook (white) runs the Italian attack ending with Qh5+ after Bxf7+.",
+            user_plays="black",
+            san_history=[
+                "e4",
+                "e5",
+                "Nf3",
+                "Nc6",
+                "Bc4",
+                "Bc5",
+                "d3",
+                "Nf6",
+                "Ng5",
+                "O-O",
+                "h3",
+                "h6",
+                "Nxf7",
+                "Rxf7",
+                "Bxf7+",
+                "Kxf7",
+                "Qh5+",
+            ],
+            eval_cp=30,
+            classification=MoveClassification.BEST,
+            expected_tone="confident",
+            forbidden_terms=("pin", "skewer"),
+            user_task="I just played Kxf7. You reply with Qh5+. In your persona's voice, say one natural-sounding line.",
+        ),
+        Scenario(
+            name="rook_white_castles_kingside",
+            description="Rook (white) castles kingside in a quiet Italian Game.",
+            user_plays="black",
+            san_history=["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "c3", "Nf6", "d3", "d6", "O-O"],
+            eval_cp=15,
+            classification=MoveClassification.BEST,
+            expected_tone="neutral",
+            forbidden_terms=("pin", "fork", "skewer"),
+            user_task="You just played O-O (castled kingside). In your persona's voice, say one natural-sounding line.",
+        ),
+        Scenario(
+            name="rook_white_blunders_queen",
+            description="Rook (white) blundered the queen on h7; user's rook captured it. Rook is losing.",
+            user_plays="black",
+            san_history=["d4", "d5", "Qd3", "Nf6", "Qh3", "Nc6", "Qxh7", "Rxh7"],
+            eval_cp=-800,
+            classification=MoveClassification.BLUNDER,
+            expected_tone="rattled",
+            forbidden_terms=("winning", "my advantage", "initiative"),
+            user_task="I just played Rxh7, capturing your queen. In your persona's voice, say one natural-sounding line — you just lost your queen.",
+        ),
     ]
 
 
@@ -209,14 +825,23 @@ _PERSONA_PROMPTS = {
 
 
 def build_messages(scenario: Scenario, directive: str) -> list[dict]:
-    """Replicate the message shape the agent loop hands to the LLM."""
+    """Replicate the message shape the agent loop hands to the LLM.
+
+    Notes on the merged-system shape: the real pipeline's
+    :class:`RichChessAnalyticsHook` injects the briefing as a *second*
+    system message positioned right before the last user message.
+    That shape breaks on chat templates that enforce a single
+    leading system (Qwen3.5, some llama-cpp chat formats). To run a
+    fair cross-model benchmark we collapse the persona system and
+    the briefing into one system message here — equivalent from the
+    model's POV, compatible with every template we've tested.
+    Adjust the real pipeline to match if / when we ship a model that
+    requires it.
+    """
     system = _ROOK_TOOL_GUIDANCE + "\n\n---\n\n" + _PERSONA_PROMPTS.get(scenario.persona, _PERSONA_PROMPTS["casual"])
-    # The briefing is injected as a separate system message by
-    # RichChessAnalyticsHook — mirror that shape.
     briefing = f"[CHESS BRIEFING — internal context, do not read aloud verbatim]\n{directive}\n[END BRIEFING]"
     return [
-        {"role": "system", "content": system},
-        {"role": "system", "content": briefing},
+        {"role": "system", "content": f"{system}\n\n---\n\n{briefing}"},
         {"role": "user", "content": scenario.user_task},
     ]
 
@@ -279,10 +904,12 @@ def grade(scenario: Scenario, directive: str, reply: str) -> GradingResult:
     if not reply.strip() or reply.strip().lower() in ("<silent>", "(silent)"):
         flags.append("emitted <silent> sentinel — no chat bubble produced")
 
-    # 8. <think> leakage — ThinkTagStripHook would strip these in the
-    # real pipeline; in the eval we want to know when they'd fire.
-    if "<think>" in low:
-        flags.append("reply contains <think> tag (would be stripped in pipeline)")
+    # 8. <think> leakage — ``_extract_text`` already strips closed and
+    # truncated ``<think>...</think>`` blocks before grading (mirrors
+    # the pipeline's ``ThinkTagStripHook``). If a residual tag survives
+    # that strip, something's malformed — flag it.
+    if "<think>" in low or "</think>" in low:
+        flags.append("reply has unclosed <think> markers after strip")
 
     # Score = 100 - 12 * len(flags), clamped to [0, 100].
     score = max(0, 100 - 12 * len(flags))
@@ -482,11 +1109,36 @@ def _directive_for(scenario: Scenario) -> str | None:
 
 
 def _extract_text(raw: Any) -> str:
-    """Pull the first message's text from a llama-cpp chat completion."""
+    """Pull the first message's text from a llama-cpp chat completion
+    AND apply the same ``<think>...</think>`` stripping the real
+    RookApp pipeline does at ``AFTER_LLM`` via
+    :class:`ThinkTagStripHook`.
+
+    Without this, Qwen3-family models are penalised by the grader for
+    emitting structural ``<think>\\n\\n</think>`` wrappers even when
+    the reasoning content inside is empty (the ``/no_think`` soft
+    switch takes effect but doesn't remove the tag markers). Mirroring
+    the pipeline's strip gives a fair score — the user never sees
+    those tags.
+    """
     try:
-        return raw["choices"][0]["message"]["content"] or ""
+        text = raw["choices"][0]["message"]["content"] or ""
     except Exception:
-        return str(raw)
+        text = str(raw)
+    # Closed ``<think>...</think>`` blocks — including empty ones.
+    text = _THINK_BLOCK_RE.sub("", text)
+    # Truncated ``<think>...`` to EOF (model ran out of tokens
+    # before closing the tag).
+    text = _THINK_TRUNCATED_RE.sub("", text)
+    return text.strip()
+
+
+# Mirror :mod:`edgevox.examples.agents.chess_robot.sanitize`. Duplicated
+# rather than imported because importing the hook module pulls in
+# ``edgevox.agents.hooks`` (fine) and we want the eval script to
+# stay a single-file tool when run from other checkouts.
+_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
+_THINK_TRUNCATED_RE = re.compile(r"<think>.*$", re.DOTALL)
 
 
 if __name__ == "__main__":

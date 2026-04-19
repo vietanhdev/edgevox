@@ -1,5 +1,18 @@
 # Robotics Examples
 
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <a href="/robot_panda.png"><img src="/robot_panda.png" alt="MuJoCo Franka Panda pick-and-place"/></a>
+      <br/><sub><b>MuJoCo · Franka arm</b> — voice-controlled pick-and-place</sub>
+    </td>
+    <td align="center" width="50%">
+      <a href="/robot_unitree_g1.png"><img src="/robot_unitree_g1.png" alt="Unitree G1 humanoid"/></a>
+      <br/><sub><b>MuJoCo · Unitree G1</b> — procedural gait + ONNX policy slot</sub>
+    </td>
+  </tr>
+</table>
+
 Five end-to-end robot agents ship in `edgevox.examples.agents`. Each is a single Python file wiring an `LLMAgent` to a concrete `SimEnvironment` (or ROS2 bridge) through the voice pipeline. You can launch any of them from the CLI:
 
 ```bash
@@ -57,6 +70,8 @@ edgevox-agent robot-humanoid --simple-ui
 ```
 
 A Unitree humanoid (model auto-fetched from `nrl-ai/edgevox-models` on first use — ~15 MB) appears in the MuJoCo viewer standing on its home keyframe. Say "walk forward half a meter" / "turn left ninety degrees" / "stand" — a procedural gait swings legs + arms while the root pose advances. Swap in your own ONNX walking policy via `MujocoHumanoidEnvironment.set_walking_policy(...)` for real RL locomotion.
+
+![Unitree G1 humanoid in MuJoCo](/robot_unitree_g1.png)
 
 **Tools exposed:** `list_joints`, `describe_pose`, `status`.
 **Cancellable skills:** `walk_forward(distance_m)`, `turn(angle_deg)`, `stand`, `set_stance(...)`.

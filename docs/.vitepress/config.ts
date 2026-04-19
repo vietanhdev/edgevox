@@ -102,6 +102,10 @@ export default withMermaid(
                 text: "SLM tool-calling benchmark",
                 link: "/documentation/reports/slm-tool-calling-benchmark",
               },
+              {
+                text: "Chess commentary benchmark",
+                link: "/documentation/reports/chess-commentary-benchmark",
+              },
             ],
           },
         ],

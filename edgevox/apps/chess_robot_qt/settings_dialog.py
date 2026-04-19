@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import random
+
 from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QPainter
 from PySide6.QtSvg import QSvgRenderer
@@ -12,7 +14,9 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QFrame,
+    QHBoxLayout,
     QLabel,
+    QPushButton,
     QVBoxLayout,
 )
 
@@ -163,6 +167,10 @@ class SettingsDialog(QDialog):
             output_device=_selected_device(self._speaker_combo),
             debug_mode=self._debug_checkbox.isChecked(),
             llm_model=_selected_key(self._llm_combo, LLM_CHOICES),
+            # Preserve the side the user picked at New Game — this
+            # dialog doesn't own the side knob, but the dataclass
+            # default would otherwise overwrite it to "white" on save.
+            user_side=self._current.user_side,
         )
         new.save()
         self.changed.emit(new)
@@ -302,4 +310,99 @@ class _BoardPreview(QFrame):
             p.end()
 
 
-__all__ = ["SettingsDialog"]
+class SidePickerDialog(QDialog):
+    """Modal "Play as: White / Black / Random" prompt for New Game.
+
+    Random is resolved inside :meth:`pick` before it's returned — the
+    caller (and :class:`~edgevox.apps.chess_robot_qt.settings.Settings`)
+    only ever sees the concrete side the user will actually play, so
+    the persisted ``user_side`` round-trips cleanly.
+    """
+
+    def __init__(self, current: str = "white", parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("New Game")
+        self.setModal(True)
+        self.setMinimumWidth(320)
+        self.setStyleSheet("QDialog { background: #0b111a; color: #dbe4ef; } QLabel { color: #dbe4ef; }")
+
+        self._choice: str | None = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 16)
+        layout.setSpacing(12)
+
+        header = QLabel("Play as")
+        header.setStyleSheet("font-size: 15px; font-weight: 600; color: #dbe4ef;")
+        layout.addWidget(header)
+
+        hint = QLabel("White moves first. Random picks a side for you.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #8796a8; font-size: 12px;")
+        layout.addWidget(hint)
+
+        # Three big side-choice buttons. The ♔ / ♚ glyphs are the Unicode
+        # chess pieces — no extra icon asset required, and they render
+        # uniformly across Qt builds. Each button's callback sets
+        # ``_choice`` then ``accept()``s so the caller can read the
+        # result.
+        current = current.lower()
+        self._white_btn = self._make_side_button("♔  White", "white", current == "white")
+        self._black_btn = self._make_side_button("♚  Black", "black", current == "black")
+        self._random_btn = self._make_side_button("🎲  Random", "random", False)
+
+        layout.addWidget(self._white_btn)
+        layout.addWidget(self._black_btn)
+        layout.addWidget(self._random_btn)
+
+        cancel_row = QHBoxLayout()
+        cancel_row.addStretch(1)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setStyleSheet(
+            "QPushButton { background: transparent; color: #9aa7b9; "
+            "padding: 8px 18px; border: none; font-size: 13px; } "
+            "QPushButton:hover { color: #dbe4ef; }"
+        )
+        cancel_btn.clicked.connect(self.reject)
+        cancel_row.addWidget(cancel_btn)
+        layout.addLayout(cancel_row)
+
+    def _make_side_button(self, text: str, side: str, highlight: bool) -> QPushButton:
+        btn = QPushButton(text)
+        btn.setMinimumHeight(46)
+        base_bg = "#34d399" if highlight else "#1e2b3a"
+        base_fg = "#0a0e14" if highlight else "#dbe4ef"
+        hover_bg = "#3ee0a3" if highlight else "#2b3c58"
+        btn.setStyleSheet(
+            f"QPushButton {{ background: {base_bg}; color: {base_fg}; "
+            "border: none; border-radius: 10px; font-size: 14px; font-weight: 600; "
+            "text-align: left; padding-left: 18px; } "
+            f"QPushButton:hover {{ background: {hover_bg}; }}"
+        )
+        btn.clicked.connect(lambda: self._select(side))
+        return btn
+
+    def _select(self, side: str) -> None:
+        self._choice = side
+        self.accept()
+
+    @property
+    def choice(self) -> str | None:
+        return self._choice
+
+    @classmethod
+    def pick(cls, parent=None, current: str = "white") -> str | None:
+        """Open the modal; return the resolved side (``"white"`` /
+        ``"black"``) or ``None`` if the user cancelled. ``Random`` is
+        resolved via :func:`random.choice` here — callers never have
+        to handle the ``"random"`` string."""
+        dlg = cls(current, parent)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return None
+        choice = dlg.choice
+        if choice == "random":
+            return random.choice(["white", "black"])
+        return choice
+
+
+__all__ = ["SettingsDialog", "SidePickerDialog"]

@@ -150,7 +150,12 @@ class TestCommentaryGateHook:
         assert "inaccuracy" in directive.lower()
         assert "engine evaluation" in directive.lower()
 
-    def test_game_over_always_speaks(self):
+    def test_game_over_emits_canned_persona_line(self):
+        """Game-over short-circuits the LLM with a canned persona
+        closer (zero attribution failures, zero LLM cost). The gate
+        returns ``HookResult.end(line)`` and no directive is set —
+        the agent loop terminates with the canned text as the reply.
+        """
         state = _StubState(
             san_history=["e4", "e5", "Bc4", "Nc6", "Qh5", "Nf6", "Qxf7"],
             is_game_over=True,
@@ -158,10 +163,12 @@ class TestCommentaryGateHook:
             winner="white",
         )
         result, ctx = _run(state, engine_plays="white")
-        assert result is None
-        directive = ctx.session.state.get("commentary_directive")
-        assert directive is not None
-        assert "game" in directive.lower() or "checkmate" in directive.lower()
+        assert result is not None
+        assert result.action.name == "END_TURN"
+        # Canned line is non-empty and a real sentence.
+        assert isinstance(result.payload, str) and len(result.payload) > 5
+        # No directive injected — the LLM never runs on game-over.
+        assert "commentary_directive" not in ctx.session.state
 
     def test_quiet_streak_fallback_forces_speech(self):
         """After N consecutive silent turns, the gate allows a keepalive

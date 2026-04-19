@@ -28,17 +28,22 @@ from edgevox.llm import tool
 PANDA_PERSONA = (
     "You are Panda, a terse pick-and-place robot arm on a tabletop. "
     "The table has three coloured cubes: red_cube, green_cube, blue_cube. "
-    "You can move to an x/y/z position, grasp a named cube, release it, "
-    "list objects and their positions, or return home. "
-    "When the user asks you to pick something up, call grasp(object). "
-    "To place it somewhere, move_to the target position then release. "
+    "To move the tool to a raw x/y/z position call move_to_point. "
+    "To hover directly above a cube (e.g. before grasping) call move_above_object(object=...). "
+    "To grasp a cube call grasp(object=...); to drop whatever you're holding call release. "
+    "Call goto_home to retract. "
+    "For queries: list_objects lists every cube and its position, locate_object(name) "
+    "returns the position of one cube, get_gripper_state reports whether a cube is held, "
+    "and get_ee_pose returns the current tool position. "
     "Always reply in one short sentence. Never read raw JSON aloud."
 )
 
+_HOVER_CLEARANCE_M = 0.05
+
 
 @skill(latency_class="slow", timeout_s=30.0)
-def move_to(x: float, y: float, z: float, ctx: AgentContext) -> GoalHandle:
-    """Move the end-effector to an x/y/z position in metres.
+def move_to_point(x: float, y: float, z: float, ctx: AgentContext) -> GoalHandle:
+    """Move the end-effector to an explicit x/y/z position in metres.
 
     Args:
         x: target x position.
@@ -46,6 +51,28 @@ def move_to(x: float, y: float, z: float, ctx: AgentContext) -> GoalHandle:
         z: target z position.
     """
     return ctx.deps.apply_action("move_to", x=x, y=y, z=z)
+
+
+@skill(latency_class="slow", timeout_s=30.0)
+def move_above_object(object: str, ctx: AgentContext) -> GoalHandle:
+    """Hover the end-effector directly above a named cube (5 cm clearance).
+
+    Args:
+        object: name of the cube to hover above (red_cube, green_cube, or blue_cube).
+    """
+    world = ctx.deps.get_world_state()
+    objs = world.get("objects", {})
+    if object not in objs:
+        h = GoalHandle()
+        h.fail(f"unknown object {object!r}; known: {sorted(objs)}")
+        return h
+    pos = objs[object]
+    return ctx.deps.apply_action(
+        "move_to",
+        x=float(pos["x"]),
+        y=float(pos["y"]),
+        z=float(pos["z"]) + _HOVER_CLEARANCE_M,
+    )
 
 
 @skill(latency_class="slow", timeout_s=30.0)
@@ -84,6 +111,34 @@ def list_objects(ctx: AgentContext) -> list[dict[str, Any]]:
     return h.result
 
 
+@tool
+def locate_object(name: str, ctx: AgentContext) -> dict[str, Any]:
+    """Return the x/y/z position of a single cube by name.
+
+    Args:
+        name: cube name (red_cube, green_cube, or blue_cube).
+    """
+    world = ctx.deps.get_world_state()
+    objs = world.get("objects", {})
+    if name not in objs:
+        return {"error": f"unknown object: {name}", "known": sorted(objs)}
+    pos = objs[name]
+    return {
+        "object": name,
+        "x": round(float(pos["x"]), 3),
+        "y": round(float(pos["y"]), 3),
+        "z": round(float(pos["z"]), 3),
+    }
+
+
+@tool
+def get_gripper_state(ctx: AgentContext) -> dict[str, Any]:
+    """Return whether the gripper is holding an object and if so, which one."""
+    world = ctx.deps.get_world_state()
+    held = world.get("grasped")
+    return {"holding": held, "open": held is None}
+
+
 def _pre_run(args: argparse.Namespace) -> None:
     from edgevox.integrations.sim.mujoco_arm import MujocoArmEnvironment
 
@@ -98,8 +153,8 @@ APP = AgentApp(
     name="Panda",
     description="Voice-controlled tabletop arm running in MuJoCo.",
     instructions=PANDA_PERSONA,
-    tools=[list_objects],
-    skills=[move_to, grasp, release, goto_home, get_ee_pose],
+    tools=[list_objects, locate_object, get_gripper_state],
+    skills=[move_to_point, move_above_object, grasp, release, goto_home, get_ee_pose],
     deps=None,
     stop_words=("stop", "halt", "freeze", "abort", "emergency"),
     greeting=(

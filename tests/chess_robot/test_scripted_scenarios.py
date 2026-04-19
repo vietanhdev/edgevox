@@ -287,12 +287,13 @@ class TestScenarioCheckmate:
     """User delivers checkmate → game-over branch, always speaks."""
 
     def test_mate_by_user(self):
+        """Game-over now uses canned persona lines via ``HookResult.end``
+        instead of going through the LLM. Asserts the gate ended the
+        turn (skipping LLM) and emitted a non-empty canned line via
+        the ``commentary_gate`` event."""
         turns = [
-            # Greeting first so the mate turn hits the real game-over branch,
-            # not the opening branch.
             ScriptedTurn(san_history=["e4", "e5"], classification=MoveClassification.BEST),
             ScriptedTurn(
-                # Scholar's mate.
                 san_history=["e4", "e5", "Bc4", "Nc6", "Qh5", "Nf6", "Qxf7#"],
                 is_game_over=True,
                 game_over_reason="checkmate",
@@ -301,8 +302,10 @@ class TestScenarioCheckmate:
         ]
         records = run_scenario(turns)
         final = records[-1]
-        assert not final.gate_ended, "game-over turn must speak"
-        assert "game over" in (final.directive or "").lower()
+        assert final.gate_ended, "game-over turn must short-circuit via end_turn (canned reply)"
+        decisions = [d for d in final.gate_decisions if d.get("decision") == "canned-game-end"]
+        assert decisions, f"expected canned-game-end decision, got {final.gate_decisions}"
+        assert len(decisions[0].get("line", "")) > 5
 
 
 class TestScenarioCaptureDescriptions:
@@ -338,7 +341,10 @@ class TestScenarioCaptureDescriptions:
         assert "pawn" in directive, "engine's capturing piece must be named"
 
     def test_capture_check_and_mate_notation(self):
-        """The ``+`` / ``#`` suffix must be translated to English."""
+        """Game-over with ``#`` SAN: gate emits a canned persona line
+        via ``HookResult.end``, no directive. Mate notation handling
+        in mid-game ``_describe_move`` is exercised separately by the
+        check/mate scenarios."""
         turns = [
             ScriptedTurn(
                 san_history=["e4", "e5", "Bc4", "Nc6", "Qh5", "Nf6", "Qxf7#"],
@@ -349,13 +355,9 @@ class TestScenarioCaptureDescriptions:
         ]
         records = run_scenario(turns, user_plays="white")
         final = records[-1]
-        # Game-over branch owns this — directive should mention game over.
-        # The rich "delivering checkmate" wording lives in
-        # ``_describe_move`` which is only invoked via the mid-game
-        # branch, not the terminal branch. Just assert that we speak
-        # and the directive references mate.
-        assert not final.gate_ended
-        assert "checkmate" in (final.directive or "").lower()
+        assert final.gate_ended  # canned reply short-circuits the LLM
+        decisions = [d for d in final.gate_decisions if d.get("decision") == "canned-game-end"]
+        assert decisions, "canned game-end line should fire on mate"
 
 
 class TestScenarioClassificationAttribution:

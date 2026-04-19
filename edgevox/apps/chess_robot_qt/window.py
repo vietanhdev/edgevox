@@ -46,7 +46,8 @@ from edgevox.apps.chess_robot_qt.face import RobotFaceWidget
 from edgevox.apps.chess_robot_qt.lottie_face import LottieFaceWidget
 from edgevox.apps.chess_robot_qt.lottie_face import is_available as lottie_available
 from edgevox.apps.chess_robot_qt.settings import Settings
-from edgevox.apps.chess_robot_qt.settings_dialog import SettingsDialog
+from edgevox.apps.chess_robot_qt.settings_dialog import SettingsDialog, SidePickerDialog
+from edgevox.apps.chess_robot_qt.sfx import MoveSfx, classify_move_sfx
 from edgevox.apps.chess_robot_qt.tts import TTSWorker
 from edgevox.apps.chess_robot_qt.voice import VoiceWorker
 
@@ -77,6 +78,8 @@ class RookWindow(QMainWindow):
             bridge.config.persona = self._settings.persona
         if self._settings.llm_model and self._settings.llm_model != bridge.config.llm_path:
             bridge.config.llm_path = self._settings.llm_model
+        if self._settings.user_side and self._settings.user_side != bridge.config.user_plays:
+            bridge.config.user_plays = self._settings.user_side
         self._accent = QColor(_PERSONA_ACCENT.get(bridge.config.persona, _DEFAULT_ACCENT))
         # The engine applies its reply the instant the user plays so the
         # LLM briefing has full context, but showing that reply on the
@@ -246,6 +249,21 @@ class RookWindow(QMainWindow):
             # downgrade to text-only silently.
             self._tts.start()
 
+        # Move SFX — synthesised click tones per piece event so the
+        # user hears their move and Rook's reply land on the board.
+        # Gated by the same ``sfx_muted`` switch as TTS so one toggle
+        # silences all audio feedback. Cheap to instantiate (no model
+        # load); the instance holds a small numpy + sounddevice
+        # handle only when audio is actually available on the host.
+        self._sfx = MoveSfx(
+            enabled=not self._settings.sfx_muted,
+            output_device=self._settings.output_device,
+        )
+        # Track the last SAN we voiced so re-renders of the same state
+        # (e.g. the post-turn re-broadcast safety net in the bridge)
+        # don't trigger a second click.
+        self._last_sfx_san: str | None = None
+
     # ----- bridge signal handlers -----
 
     def _on_ready(self) -> None:
@@ -253,10 +271,27 @@ class RookWindow(QMainWindow):
         self._input.set_enabled(True)
         # Swap the loading panel out for the live board.
         self._board_stack.setCurrentWidget(self._board)
+        # Re-apply orientation — if ``_try_restore_game`` resurrected a
+        # saved game whose side differs from ``Settings.user_side`` (e.g.
+        # the user started a Black game last session then toggled the
+        # default back to White), the bridge has since flipped
+        # ``config.user_plays`` to match the save. The initial
+        # ``set_orientation`` in ``__init__`` ran before the load job,
+        # so it saw the pre-restore value.
+        self._board.set_orientation(self._bridge.config.user_plays)
         # Prime the board with the starting position.
         snap = self._bridge.snapshot()
         if snap is not None:
             self._board.set_state(snap)
+        # Fresh match (no saved game was restored) → prompt the user to
+        # pick a side before the first move. A restored launch silently
+        # continues at the saved orientation. ``QTimer.singleShot(0)``
+        # defers the modal until after ``ready`` finishes painting — a
+        # modal raised inside the ready handler can steal focus before
+        # the main window is visible, which on some WMs leaves the app
+        # behind other windows.
+        if not self._bridge.game_restored:
+            QTimer.singleShot(0, self._prompt_side_for_new_match)
         # Replay the persisted chat transcript so the user sees their
         # prior exchanges after a restart. The bridge already restored
         # the session for the agent's context inside ``_build``; we do
@@ -306,11 +341,13 @@ class RookWindow(QMainWindow):
                 self._apply_chess_state(snap)
 
     def _on_chess_state(self, state) -> None:
+        # "Engine just moved" = a move landed AND it's now the user's
+        # turn. The older ``ply % 2 == 0`` guard assumed White = user
+        # and silently broke when the user plays Black (engine opens on
+        # odd plies). ``last_move_san`` already filters the "ply 0, no
+        # moves" case, so side-to-move is the only signal we need.
         engine_just_moved = bool(
-            state.last_move_san
-            and state.turn == self._bridge.config.user_plays
-            and state.ply >= 2
-            and state.ply % 2 == 0
+            state.last_move_san and state.turn == self._bridge.config.user_plays and state.ply >= 1
         )
         if engine_just_moved:
             # Hold the reveal. Overwrites any prior pending state so the
@@ -345,14 +382,44 @@ class RookWindow(QMainWindow):
                 b = moves[i + 1] if i + 1 < len(moves) else ""
                 pairs.append(f"{i // 2 + 1}. {w} {b}".rstrip())
             self._history.setText("   ".join(pairs[-8:]))
-        # Engine-move chip.
-        if (
-            state.last_move_san
-            and state.turn == self._bridge.config.user_plays
-            and state.ply >= 2
-            and state.ply % 2 == 0
-        ):
+        # Engine-move chip. Same side-agnostic check as ``_on_chess_state``
+        # — "my turn + a move just landed" = engine played, regardless
+        # of whether I'm White or Black.
+        if state.last_move_san and state.turn == self._bridge.config.user_plays and state.ply >= 1:
             self._chat.add_move_chip("rook", state.last_move_san)
+        # Fire the matching SFX. Keyed on ``last_move_san`` so the
+        # bridge's post-turn re-broadcast (safety net against lost
+        # cross-thread signals) doesn't double-click when the board
+        # lands on the same state we already rendered.
+        self._play_move_sfx(state)
+
+    def _play_move_sfx(self, state) -> None:
+        san = getattr(state, "last_move_san", None)
+        is_over = bool(getattr(state, "is_game_over", False))
+        # Dedupe: same SAN as last played — skip. Covers the
+        # post-turn re-broadcast and the pending-reveal timer both
+        # firing on identical state.
+        key = f"{san}|{is_over}|{getattr(state, 'ply', 0)}"
+        if key == self._last_sfx_san:
+            return
+        self._last_sfx_san = key
+        if not san and not is_over:
+            return
+        kind = classify_move_sfx(san, is_game_over=is_over)
+        if kind == "game_end":
+            winner = (getattr(state, "winner", None) or "").lower()
+            user_side = (self._bridge.config.user_plays or "white").lower()
+            engine_side = "black" if user_side.startswith("w") else "white"
+            rook_won = winner == engine_side
+            self._sfx.play_game_end(rook_won=rook_won)
+        elif kind == "check":
+            self._sfx.play_check()
+        elif kind == "castle":
+            self._sfx.play_castle()
+        elif kind == "capture":
+            self._sfx.play_capture()
+        else:
+            self._sfx.play_move()
 
     def _on_face(self, payload: dict) -> None:
         mood = payload.get("mood", "calm")
@@ -421,18 +488,67 @@ class RookWindow(QMainWindow):
         self._bridge.submit_text(uci)
 
     def _on_new_game(self) -> None:
-        # Clear the UI + wipe persisted memory/notes/chat history so
-        # stale commentary from the previous game can't leak into the
-        # new one. Bridge.reset_game() rewinds the board; submit_text
-        # primes Rook to announce the new match.
+        # "New game" button pressed mid-session. Cancelling bails out
+        # cleanly — no board reset, no memory wipe, the current game
+        # continues.
+        side = SidePickerDialog.pick(self, current=self._settings.user_side)
+        if side is None:
+            return
+        self._start_match(side, wipe_memory=True)
+
+    def _prompt_side_for_new_match(self) -> None:
+        """Startup variant: ask for a side for the fresh match that's
+        about to begin. Triggered from ``_on_ready`` when the bridge
+        did NOT restore a saved game. Cancelling falls through to the
+        persisted ``Settings.user_side`` — the user can still play; we
+        just don't re-ask next launch unless they hit New Game."""
+        side = SidePickerDialog.pick(self, current=self._settings.user_side)
+        if side is None:
+            return
+        # Starting fresh from ready → the just-loaded env is already at
+        # the persisted side; ``_start_match`` handles both the flip-side
+        # and keep-side cases by always routing through
+        # ``bridge.reset_game(user_plays=…)``. Don't wipe memory — this
+        # is the first turn after launch, there's nothing stale to
+        # clear, and wiping would drop the session transcript the user
+        # just saw replayed.
+        self._start_match(side, wipe_memory=False)
+
+    def _start_match(self, side: str, *, wipe_memory: bool) -> None:
+        """Reset the board, flip the view, and kick off the welcome
+        turn. Shared by the New-Game button and the startup side
+        picker."""
         self._chat.clear()
         self._reply_label.setText("")
         if self._tts is not None:
             self._tts.interrupt()
         self._bridge.cancel_turn(reason="new_game")
-        self._bridge.clear_memory()
-        self._bridge.reset_game()
-        self._bridge.submit_text("new game")
+        if wipe_memory:
+            self._bridge.clear_memory()
+        # Flip the board view BEFORE the reset so the first paint of
+        # the new game lands on the correct orientation.
+        self._board.set_orientation(side)
+        engine_opened = self._bridge.reset_game(user_plays=side)
+        # Persist so the next launch opens with the same orientation.
+        self._settings.user_side = side
+        self._settings.save()
+        # Dedupe guard reset so the first SFX of the new game fires
+        # even if the engine's opening move happens to match the last
+        # SAN/ply key we played in the previous game.
+        self._last_sfx_san = None
+        if engine_opened:
+            # MoveInterceptHook's regex matches "new game" / "reset" /
+            # "restart" and would call ``env.new_game()`` again — that
+            # would wipe the engine's opener. Use a neutral narration
+            # prompt instead; RichChessAnalyticsHook's briefing already
+            # surfaces Rook's just-played move.
+            self._bridge.submit_text(
+                "You just played your opening move as white in a fresh match. "
+                "Greet the user, name the move you played, and invite their reply — "
+                "one short line, in persona."
+            )
+        else:
+            self._bridge.submit_text("new game")
 
     def _on_mic_clicked(self) -> None:
         """Toggle voice input. Lazy-starts the VoiceWorker on first
@@ -490,8 +606,14 @@ class RookWindow(QMainWindow):
         self._board.set_piece_set(new.piece_set)
         self._board.set_theme(new.board_theme)
         if new.sfx_muted != self._settings.sfx_muted:
-            # SFX are a future hook — flag for later.
-            pass
+            # Move-click SFX honours the same mute flag. TTS is
+            # already created / not per the initial value; re-creating
+            # it live would thrash the Kokoro load, so we leave the
+            # TTS toggle as next-launch but flip move SFX immediately.
+            self._sfx = MoveSfx(
+                enabled=not new.sfx_muted,
+                output_device=new.output_device,
+            )
         # Debug mode is purely observational — the tap hook is already
         # installed, so flipping the flag takes effect on the very next
         # fire point.

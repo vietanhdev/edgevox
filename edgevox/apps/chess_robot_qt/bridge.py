@@ -52,6 +52,11 @@ from edgevox.agents.memory import Compactor, NotesFile, SQLiteMemoryStore
 from edgevox.examples.agents.chess_robot.commentary_gate import CommentaryGateHook
 from edgevox.examples.agents.chess_robot.face_hook import RobotFaceHook
 from edgevox.examples.agents.chess_robot.move_intercept import MoveInterceptHook
+
+# Persona-and-protocol prompt lives in
+# :mod:`edgevox.examples.agents.chess_robot.prompts` so the eval harness
+# (no Qt) and any future server / CLI surface share the same string.
+from edgevox.examples.agents.chess_robot.prompts import ROOK_TOOL_GUIDANCE as _ROOK_TOOL_GUIDANCE
 from edgevox.examples.agents.chess_robot.rich_board import RichChessAnalyticsHook
 from edgevox.examples.agents.chess_robot.sanitize import (
     BriefingLeakGuard,
@@ -249,6 +254,12 @@ class RookBridge:
         self._notes: NotesFile | None = None
         self._sessions = None
         self._game_path: Path | None = None
+        # Set by ``_try_restore_game`` when game.json resurrected a live
+        # board. Consumed by the window on ``ready`` — a non-restored
+        # launch is "about to start a fresh match" and prompts the user
+        # for a side, whereas a restored launch silently continues the
+        # saved game at the saved orientation.
+        self._game_restored = False
         # Debug-mode flag. Read per fire point by the installed
         # :class:`DebugTapHook` via a predicate closure, flipped live
         # via :meth:`set_debug_mode`. The hook is always installed; the
@@ -304,11 +315,36 @@ class RookBridge:
         self.signals.state_changed.emit("thinking")
         self._pool.start(_TurnJob(self, text))
 
-    def reset_game(self) -> None:
-        """Start a fresh board. Fires chess_state_changed."""
+    def reset_game(self, user_plays: str | None = None) -> bool:
+        """Start a fresh board. Fires ``chess_state_changed``.
+
+        When ``user_plays`` is given, update the persisted config so
+        downstream hooks (``CommentaryGateHook`` reads ``env.user_plays``,
+        the SFX layer reads ``config.user_plays``) see the new side on
+        their next fire — and reconfigure the env itself. For the
+        black-side case, also play the engine's opening move before
+        returning so the agent narration turn that follows has a move
+        to talk about. Returns ``True`` iff the engine opened — the
+        caller uses that to pick between the "welcome user" prompt and
+        the "narrate my opening" prompt, because the regex-gated
+        ``MoveInterceptHook`` would otherwise re-reset the board on
+        the literal text ``"new game"`` and wipe the opener.
+        """
         if self._env is None:
-            return
-        self._env.new_game()
+            return False
+        engine_opened = False
+        if user_plays is not None:
+            self.config.user_plays = user_plays
+            self._env.new_game(user_plays=user_plays)
+            if user_plays.lower().startswith("b"):
+                try:
+                    self._env.engine_move()
+                    engine_opened = True
+                except Exception:
+                    log.exception("reset_game: engine opening move failed (non-fatal)")
+        else:
+            self._env.new_game()
+        return engine_opened
 
     def snapshot(self):
         """Latest ChessState for the UI to render initially."""
@@ -317,6 +353,14 @@ class RookBridge:
     @property
     def env(self) -> ChessEnvironment | None:
         return self._env
+
+    @property
+    def game_restored(self) -> bool:
+        """``True`` iff the last ``start()`` resurrected a saved game
+        from ``game.json``. The window reads this on ``ready`` so it
+        knows whether to offer the side-picker (fresh launch) or
+        silently continue the saved game (restored launch)."""
+        return self._game_restored
 
     # ----- worker-thread bodies -----
 
@@ -530,6 +574,7 @@ class RookBridge:
         # side-to-move preference.
         if saved_side := data.get("user_plays"):
             self.config.user_plays = saved_side
+        self._game_restored = True
         log.info("restored saved game at ply %s", data.get("ply"))
         return True
 
@@ -755,7 +800,7 @@ class RookBridge:
                 # reply bubble, zero chatter. For notable moves it
                 # stashes a verified-facts directive that
                 # RichChessAnalyticsHook turns into a GROUND TRUTH line.
-                CommentaryGateHook(),
+                CommentaryGateHook(persona=persona.slug),
                 MoveCommentaryHook(),
                 RobotFaceHook(persona=persona.slug),
                 RichChessAnalyticsHook(),
@@ -836,26 +881,6 @@ class _LoadJob(QRunnable):
     @Slot()
     def run(self) -> None:  # pragma: no cover — event-loop-driven
         self._bridge._build()
-
-
-_ROOK_TOOL_GUIDANCE = """\
-/no_think
-I am Rook, a chess robot playing against a human. My persona — see the block below — is the whole point: the user is here for MY voice, not a chess report. I tease, gloat, sigh, joke, trash-talk, sound impressed — whatever my persona does, I do. A flat factual summary is worse than silence.
-
-PRONOUN DISCIPLINE — the single hardest rule to follow. I always refer to myself in the first person: "I played", "my knight", "I'm winning", "I missed it". I use "you" and "your" EXCLUSIVELY when speaking TO the user about THEIR moves or THEIR pieces. I never paste my own move onto the user ("you captured with the pawn" when I did). If I catch myself starting a sentence with "You're" while describing something I just did, I am wrong and must rewrite.
-
-CRITICAL — the user's message will often say "I just played X. You reply with Y." In THAT message, "I" is the user talking to me about THEIR move X, and "you" is me. When I write my reply I switch to MY perspective: my move Y becomes "I played Y" / "my Y"; the user's X becomes "your X" / "you played X". I never restate the user's "I played X" as if I had played X.
-
-When the briefing has a GROUND TRUTH section, its bullets are the event I'm reacting to. Everything else in the briefing is background context.
-
-Speaking rules:
-- Lead with personality. React emotionally, not clinically. One short sentence is usually plenty.
-- Spoken-English only: no markdown, no asterisks, no bullets, no emoji, no <think> tags, no lists. Contractions welcome.
-- Stay grounded. I don't invent tactics the briefing didn't declare — no made-up pins, forks, or specific attacks on pieces. Vague reactions ("hmm", "tough one", "well played") are fine; hallucinated specifics are not.
-- I don't recite the briefing or quote SAN notation. The user already sees the moves.
-- Vary my phrasing between turns.
-
-If the moment really doesn't call for a reaction — or I genuinely have nothing in character to add — I reply with exactly `<silent>` and nothing else."""
 
 
 def _compose_instructions(persona_prompt: str) -> str:

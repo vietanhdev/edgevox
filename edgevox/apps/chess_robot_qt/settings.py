@@ -72,10 +72,48 @@ PERSONA_LABELS = {
 # Model swap requires a fresh agent build → next launch; the dialog
 # flags that in the restart hint.
 
+# LLM choices exposed to the user in the Settings dialog.
+#
+# Ranked and annotated based on the chess-commentary benchmark
+# (``docs/documentation/reports/chess-commentary-benchmark.md``).
+# Leading stars in the label — ⭐⭐⭐ / ⭐⭐ / ⭐ — are shown in the
+# dropdown so the user sees the recommendation without reading the
+# doc. Higher stars mean better quality vs speed on realistic hardware
+# (CPU / small GPU). Quality was measured on 36 hand-audited chess
+# scenarios; attribution correctness on mate / blunder turns weighs
+# more heavily than heuristic score.
+#
+# Insertion order = display order, so the first entry is the default
+# picker position.
 LLM_CHOICES: dict[str, str] = {
-    "gemma-4-e2b": "Gemma 4 E2B — default, best quality in eval (~1.8 GB)",
-    "llama-3.2-1b": "Llama 3.2 1B — lightest / fastest, more fabrication (~0.8 GB)",
-    "qwen3-1.7b": "Qwen3 1.7B — Apache-2.0, thinking-mode model (~1.1 GB)",
+    # Top pick — cleanest semantic audit, acceptable speed on CPU.
+    "gemma-4-e2b": "⭐⭐⭐  Gemma 4 E2B — default, best quality (~1.8 GB)",
+    # Close second — Apache-2.0, similar quality, slightly slower
+    # due to thinking-mode overhead even with /no_think.
+    "qwen3-1.7b": "⭐⭐  Qwen3 1.7B — Apache-2.0 alternative (~1.1 GB)",
+    # Middle-ground size bump; marginal quality gain over 1B.
+    "llama-3.2-3b": "⭐⭐  Llama 3.2 3B — larger, more reliable than 1B (~2.0 GB)",
+    # Lightest option — attribution slips on mid-game but canned
+    # game-end replies eliminate the worst failure mode. OK for
+    # low-RAM hardware.
+    "llama-3.2-1b": "⭐  Llama 3.2 1B — lightest / fastest, some slips (~0.8 GB)",
+    # Smallest of the Qwen2.5 family; included as an Apache-2.0
+    # sub-1 GB option.
+    "qwen2.5-1.5b": "⭐  Qwen2.5 1.5B — Apache-2.0, tiny (~1.0 GB)",
+}
+
+
+# ----- Side choices -----
+#
+# The "Play as" picker offered at New Game. ``random`` is a request the
+# side-picker dialog resolves to ``white`` / ``black`` before it ever
+# hits :class:`Settings` — only resolved sides are persisted so the
+# next launch opens with the same orientation the user last saw.
+
+SIDE_CHOICES: dict[str, str] = {
+    "white": "White — you move first",
+    "black": "Black — Rook opens",
+    "random": "Random — pick for me",
 }
 
 
@@ -105,6 +143,12 @@ class Settings:
     # can switch to Llama 3.2 1B (fastest / lightest) or Qwen 3 1.7B
     # (Apache-2.0) via the Settings dialog.
     llm_model: str = "gemma-4-e2b"
+    # Side the human plays. Only ``"white"`` / ``"black"`` are persisted —
+    # ``"random"`` is resolved by the New Game dialog before it ever
+    # reaches here so the next launch keeps the orientation the user
+    # actually saw. Feeds ``RookConfig.user_plays`` and
+    # ``ChessBoardView.set_orientation`` at startup.
+    user_side: str = "white"
 
     @classmethod
     def load(cls) -> Settings:
@@ -119,6 +163,7 @@ class Settings:
             output_device=_device(q.value("output_device", None)),
             debug_mode=_bool(q.value("debug_mode", False)),
             llm_model=_llm_slug(q.value("llm_model", "llama-3.2-1b")),
+            user_side=_side_slug(q.value("user_side", "white")),
         )
 
     def save(self) -> None:
@@ -135,6 +180,7 @@ class Settings:
         q.setValue("output_device", "" if self.output_device is None else int(self.output_device))
         q.setValue("debug_mode", self.debug_mode)
         q.setValue("llm_model", self.llm_model)
+        q.setValue("user_side", self.user_side)
 
 
 def _bool(v) -> bool:
@@ -160,6 +206,16 @@ def _llm_slug(v) -> str:
     otherwise crash ``LLM()`` on launch."""
     slug = str(v) if v is not None else "gemma-4-e2b"
     return slug if slug in LLM_CHOICES else "gemma-4-e2b"
+
+
+def _side_slug(v) -> str:
+    """Pin the persisted side to ``white`` / ``black``. ``random`` is
+    resolved by the picker before save — a stray ``random`` in
+    QSettings (from a partially-migrated install or a test harness)
+    would otherwise leave ``RookConfig.user_plays`` in an unexpected
+    state."""
+    slug = str(v).lower() if v is not None else "white"
+    return slug if slug in ("white", "black") else "white"
 
 
 def available_input_devices() -> list[tuple[int, str]]:

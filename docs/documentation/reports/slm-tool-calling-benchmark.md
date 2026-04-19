@@ -145,7 +145,9 @@ Every preset is evaluated by `scripts/smoke_test_llm_presets.py`:
 4. Reload with a `get_time` tool registered; run *"What time is it in Tokyo? Use the tool."*
 5. Record whether the parser chain recovered a tool call, the full reply, and latencies.
 
-This is a **detection-focused smoke test**, not a BFCL-grade benchmark. It answers *"does the integration path work?"* — not *"how accurate is this model on 4 500 BFCL prompts?"*. For the full benchmark methodology we plan — BFCL v4 subset + τ-bench retail + a custom irrelevance / multilingual suite under T=0 with programmatic grading — see [Future work](#_9-future-work).
+This is a **detection-focused smoke test**, not a BFCL-grade benchmark. It answers *"does the integration path work?"* — not *"how accurate is this model on 4 500 BFCL prompts?"*. For the full benchmark methodology we plan — BFCL v4 subset + τ-bench retail + a custom irrelevance / multilingual suite under T=0 with programmatic grading — see [Future work](#_11-future-work).
+
+**One variable held constant: quantization.** Every preset is loaded at the `Q4_K_M` GGUF pinned in `edgevox.llm.models.PRESETS` — no Q3 / Q5 / IQ-series comparison is made inside this report. That scoping choice (and what the available knobs look like for the default Gemma 4 E2B) is documented in [§6.4](#_6-4-quantization-sensitivity-not-measured-in-this-run).
 
 **Environment:** NVIDIA RTX 3090 24 GB, 62 GB RAM, Ubuntu 24.04, driver 580, CUDA 13.0 runtime with CUDA 12.0 toolkit (cu124 pre-built `llama-cpp-python` wheel). Python 3.12, `llama-cpp-python` 0.3.20.
 
@@ -190,7 +192,7 @@ Raw data: [`docs/reports/data/slm-tool-calling-final.json`](https://github.com/v
 The seven non-calls split into three root causes:
 
 1. **Model behaviour.** Qwen3-1.7B, SmolLM3-3B, Hermes-3-3B and Phi-4-mini *had* their tool call recovered by the parser chain when they *chose* to emit one — in these runs they chose not to. BFCL v3 shows the same behaviour at these scales. Not a parser defect.
-2. **Template / infra.** Functionary v3.2 and likely Granite-4.0-350M need richer `llama-cpp-python` integration (`hf_tokenizer_path`, preserved special tokens). Tracked in [Future work](#_9-future-work).
+2. **Template / infra.** Functionary v3.2 and likely Granite-4.0-350M need richer `llama-cpp-python` integration (`hf_tokenizer_path`, preserved special tokens). Tracked in [Future work](#_11-future-work).
 3. **Wrong model category.** RoboBrain 2.0 is a vision-language-action model, not a dialog tool caller. Documented for completeness.
 
 ### 6.3 Parser coverage
@@ -203,6 +205,67 @@ The detector chain recovered tool calls from six distinct formats across the 11-
 - **xLAM JSON array** (`[{…}]`) — new `xlam` detector, covers xLAM 2-1b/3b/8b.
 - **Granite bare-ident** (`<tool_call>{name: get_time, arguments: {…}}`) — new `granite` detector + HTML-entity unescape at chain entry.
 - **Hammer fenced** (<code>```</code> `[{…}]` <code>```</code>) — falls through to `xlam`, which handles Markdown fences.
+
+### 6.4 Quantization sensitivity (not measured in this run)
+
+This benchmark holds quantization fixed at **`Q4_K_M`** for every preset — the single GGUF filename pinned in `edgevox.llm.models.PRESETS` (`edgevox/llm/models.py:54-244`). That is a deliberate scoping choice: the question this report answers is *"which model + parser combination tool-calls reliably through `llama-cpp-python`?"*, not *"where is the quant × size × accuracy frontier per family?"* Integrators sizing a deployment — and anyone trying to shrink the RookApp runtime footprint — still need the second answer. This section documents what the quant knob *is* and what it isn't, explicitly without fabricated measurements.
+
+#### What's pinned today
+
+All 18 rows in [§6.1](#_6-1-final-results-18-presets-rtx-3090-cached-loads) are `Q4_K_M`:
+
+| Family | Pinned filename | Size on disk |
+|---|---|---|
+| Gemma 4 E2B (default) | `gemma-4-E2B-it-Q4_K_M.gguf` | 1.8 GB |
+| Qwen 2.5 1.5B / 3B | `Qwen2.5-{1.5B,3B}-Instruct-Q4_K_M.gguf` | 1.0 / 2.0 GB |
+| Qwen 3 1.7B | `Qwen3-1.7B-Q4_K_M.gguf` | 1.1 GB |
+| Llama 3.2 1B / 3B | `Llama-3.2-{1B,3B}-Instruct-Q4_K_M.gguf` | 0.8 / 2.0 GB |
+| SmolLM 3 3B | `SmolLM3-3B-Q4_K_M.gguf` | 1.9 GB |
+| xLAM-2 1b / 3b / 8b-fc | `*-Q4_K_M.gguf` | 1.0 / 2.0 / 4.9 GB |
+| Granite 4.0 350M / 1B | `granite-4.0-h-{350m,1b}-Q4_K_M.gguf` | 0.3 / 0.9 GB |
+| Hermes-3 / Phi-4-mini / Functionary / ToolACE / Hammer / RoboBrain | `*-Q4_K_M.gguf` | see §6.1 |
+
+`Q4_K_M` was picked up front because it is the community-accepted "quality knee" for 1 B – 8 B models: ~4.85 bits per weight, small enough for consumer laptops, large enough that fabrication / pronoun drift in short-turn dialog stays close to the FP16 baseline.
+
+#### Available quants upstream for the EdgeVox default (Gemma 4 E2B)
+
+`unsloth/gemma-4-E2B-it-GGUF` exposes the standard ten-step llama.cpp quant ladder plus unsloth's own "UD" dynamic variants. Approximate on-disk footprint for Gemma 4 E2B (≈ 3 B effective weight count, 4 B total including per-layer embeddings):
+
+| Quant | Bits/weight | Approx size | Typical deployment tier |
+|---|---|---|---|
+| `IQ2_XXS` / `IQ2_M` | 2.1 / 2.7 | ~0.9 / 1.1 GB | Phone-class / sub-1-GB RAM budget; perplexity jumps sharply |
+| `Q2_K` | 3.4 | ~1.2 GB | Last-resort ≤ 1.5 GB slot |
+| `Q3_K_S` / `Q3_K_M` | 3.9 / 4.5 | ~1.4 / 1.5 GB | First quant where short-turn chat tone usually survives |
+| `IQ4_XS` | 4.25 | ~1.6 GB | Often matches Q4_K_M quality at ~10 % smaller |
+| **`Q4_K_M`** | **4.85** | **~1.8 GB** | **EdgeVox default — quality knee** |
+| `Q5_K_M` | 5.7 | ~2.2 GB | Diminishing returns vs. Q4_K_M on models this small |
+| `Q6_K` | 6.6 | ~2.5 GB | Practically lossless vs. FP16 |
+| `Q8_0` | 8.5 | ~3.2 GB | Reference-grade; no reason to ship over Q6_K |
+
+(Sizes are upper-bound estimates from bits-per-weight × parameter count; confirm against the Hugging Face repo before sizing storage. IQ-quants vary by a few hundred MB depending on imatrix calibration.)
+
+#### What moves when you change quant, and what doesn't
+
+For a 2 B-effective / 4 B-total model on CPU *or* a consumer GPU:
+
+- **RAM / disk footprint** — linear in bits-per-weight. Q3_K_M saves ~300–400 MB vs. Q4_K_M on Gemma 4 E2B. This is the *only* dimension that moves a lot.
+- **Decode latency** — at this size the decode is memory-bandwidth-bound, not compute-bound. First-token time and steady-state tokens/sec change by single-digit percent across Q3 → Q6 on the same backend. **Quantization is not the lever that makes responses faster.** The real latency knobs are:
+  - prompt length (system prompt trimming, memory compaction — see [`memory.md`](/documentation/memory)),
+  - `max_tokens` / stop sequences (shorter replies),
+  - persona-level pressure to answer in one sentence,
+  - upgrading the backend (Flash Attention, speculative decoding, `n_ctx` shrink).
+- **Tool-call detection rate** — largely insensitive to quant down to Q3_K_M for 2 B+ models. Below Q3 the model starts to mis-spell schema field names (e.g. `timzone` instead of `timezone`) and detection collapses. Community BFCL leaderboard mirrors (unofficial) show ≈ 2–5 pp BFCL-v3 drop Q4_K_M → Q3_K_M, ≈ 10+ pp at Q2.
+- **Pronoun drift, persona fidelity, fabrication** — the axes that RookApp's `scripts/eval_llm_commentary.py` LLM-judge penalises — are the **first** casualties of aggressive quants, before tool-calling breaks. In prior internal RookApp runs, Gemma 4 E2B at Q4_K_M was picked over Llama 3.2 1B Q4_K_M and Qwen 3 1.7B Q4_K_M specifically because of cleaner pronouns and lower fabrication; the same eval has not been re-run at Q3_K_M / IQ4_XS.
+
+#### Why a RookApp re-quant is plausible but not auto-win
+
+Concretely, for the RookApp chess-commentary slot the realistic candidates are `IQ4_XS` (~1.6 GB, often matches Q4_K_M) and `Q3_K_M` (~1.5 GB, cheaper but riskier on pronouns). Expected gain vs. current Q4_K_M:
+
+- ~200–400 MB off resident RAM and the HF cache.
+- Sub-10 % decode speedup — noticeable on a Raspberry-Pi-class target, probably in the noise on an RTX 3090.
+- Non-zero risk of regression on the fabrication / persona axes that drove the original Gemma pick.
+
+**The correct way to decide is to measure, not to guess from bits-per-weight.** [§11, item 7](#_11-future-work) specifies the sweep.
 
 ## 7 · SLM harness hardening
 
@@ -260,6 +323,7 @@ The script downloads every preset, runs the two-turn probe, and exits non-zero i
 4. **`LlamaServerLLM` backend** — subprocess adapter that spawns `llama-server --jinja` for models where `llama-cpp-python`'s post-hoc parsers aren't enough (e.g. Qwen3-Coder XML, Ministral compact).
 5. **Per-preset `chat_format` tuning** — empirically verify whether `chatml-function-calling` or native auto-detect yields higher native call rate per family.
 6. **Streaming tool-call support** — the vendored SGLang detectors already implement `parse_streaming_increment`; just needs wiring through `LLM.chat_stream`.
+7. **Quantization sweep per production candidate.** Today's report pins `Q4_K_M` for all 18 presets ([§6.4](#_6-4-quantization-sensitivity-not-measured-in-this-run)). Extend `scripts/smoke_test_llm_presets.py` with a `--quants IQ4_XS,Q3_K_M,Q4_K_M,Q5_K_M,Q6_K` flag and re-run the two-turn probe for the four production candidates — `gemma-4-e2b` (RookApp default), `qwen2.5-3b` (multilingual), `granite-4.0-1b` (Apache-2.0 tool-caller), `toolace-2-8b` (Apache-2.0 accuracy leader). Per (model, quant) record: (a) cold + cached load times, (b) chat + tool tokens/sec, (c) tool-detection pass/fail, (d) for Gemma specifically, pipe each quant through `scripts/eval_llm_commentary.py` and record the LLM-judge commentary-quality score. Output shape: a size-vs-accuracy Pareto curve per family. Expected deliverable: a follow-up §6.5 replacing the "not measured" caveat with real numbers, plus a RookApp re-quant decision backed by the commentary-judge score rather than community lore.
 
 ## Appendix A — Design decisions
 
