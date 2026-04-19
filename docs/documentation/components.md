@@ -388,7 +388,7 @@ flowchart TB
 
 - `integrations/ros2_bridge.py`, `ros2_actions.py`, `ros2_robot.py`, `ros2_qos.py` — maps `Skill` goals to ROS2 actions with consistent QoS settings. See [ROS2 Integration](/documentation/ros2).
 - `integrations/sim/` — `IrSimEnvironment` (2D, matplotlib), `MujocoArmEnvironment`, `MujocoHumanoidEnvironment`, `ExternalROS2Environment`. Each implements the `SimEnvironment` protocol from `edgevox.agents.sim` so agent code is sim-agnostic.
-- `integrations/chess/` — reference desktop application (see [Chess](/documentation/chess) and [RookApp](/documentation/desktop)). Persona + engine plug-ins are themselves `Agent` implementations.
+- `integrations/chess/` — reference desktop application (see [RookApp](/documentation/desktop)). Persona + engine plug-ins are themselves `Agent` implementations.
 
 **Swap point.** Every integration is opt-in and lives behind its own dependency. Add a new one by implementing the relevant protocol (`SimEnvironment`, `Skill`, `Agent`) and shipping it as its own package if you like.
 

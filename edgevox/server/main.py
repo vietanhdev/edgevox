@@ -95,8 +95,7 @@ def main() -> None:
             "Dotted path to an agent factory 'module:factory'. The factory receives "
             "the ServerCore and returns either an Agent or (agent, deps). When set, "
             "the WebSocket pipeline routes every turn through LLMAgent.run with hooks, "
-            "tools, and ctx.deps. Example: "
-            "'edgevox.examples.agents.chess_partner:build_server_agent'."
+            "tools, and ctx.deps."
         ),
     )
     parser.add_argument("--verbose", "-v", action="store_true", help="Debug logging")

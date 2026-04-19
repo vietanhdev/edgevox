@@ -64,7 +64,7 @@ EdgeVox is not just a library — [**RookApp**](/documentation/desktop) is a ref
 - [Agents & tools](/documentation/agents) — full agent framework reference
 - [TUI commands](/documentation/commands) — slash commands, voice switching, debugging
 - [ROS2 integration](/documentation/ros2) — topics, services, action servers
-- [Chess partner](/documentation/chess) — voice-controlled chess with pluggable engines
+- [Robotics examples](/documentation/robotics) — IR-SIM mobile robot, MuJoCo arm + humanoid, ROS2 bridge, stdlib scout
 - [RookApp (desktop)](/documentation/desktop) — shipping EdgeVox as a native PySide6 app
 
 **Harness architecture**

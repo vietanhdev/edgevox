@@ -17,7 +17,9 @@ export default withMermaid(
     srcExclude: ["reports/**"],
 
     // The raw data directory is the only tolerated dead-link target.
-    ignoreDeadLinks: [/^\/reports\//],
+    // Also skip ``http://localhost…`` example URLs in the monitoring
+    // guide — those are instructions, not real links.
+    ignoreDeadLinks: ["localhost", /^\/reports\//, /^https?:\/\/(localhost|127\.0\.0\.1)/],
 
     head: [
       ["link", { rel: "icon", type: "image/svg+xml", href: "/logo.svg" }],
@@ -49,49 +51,53 @@ export default withMermaid(
       sidebar: {
         "/documentation/": [
           {
-            text: "Getting Started",
+            text: "Start Here",
             items: [
               { text: "Introduction", link: "/documentation/" },
               { text: "Quick Start", link: "/documentation/quickstart" },
-              { text: "Architecture", link: "/documentation/architecture" },
-              { text: "Component Design", link: "/documentation/components" },
               { text: "Configuration", link: "/documentation/configuration" },
             ],
           },
           {
-            text: "Features",
+            text: "Agents",
             items: [
-              { text: "Languages", link: "/documentation/languages" },
-              { text: "Voice Pipeline", link: "/documentation/pipeline" },
               { text: "Agents & Tools", link: "/documentation/agents" },
-              { text: "TUI Commands", link: "/documentation/commands" },
-              { text: "ROS2 Integration", link: "/documentation/ros2" },
-              { text: "Chess Partner", link: "/documentation/chess" },
-              { text: "RookApp (Desktop)", link: "/documentation/desktop" },
-            ],
-          },
-          {
-            text: "Harness Architecture",
-            collapsed: false,
-            items: [
               { text: "Agent loop", link: "/documentation/agent-loop" },
               { text: "Hooks", link: "/documentation/hooks" },
               { text: "Memory", link: "/documentation/memory" },
               { text: "Multi-agent", link: "/documentation/multiagent" },
-              { text: "Interrupt & barge-in", link: "/documentation/interrupt" },
               { text: "Tool calling", link: "/documentation/tool-calling" },
+              { text: "Interrupt & barge-in", link: "/documentation/interrupt" },
+            ],
+          },
+          {
+            text: "Voice & Audio",
+            items: [
+              { text: "Voice Pipeline", link: "/documentation/pipeline" },
+              { text: "Languages", link: "/documentation/languages" },
+              { text: "TUI Commands", link: "/documentation/commands" },
+            ],
+          },
+          {
+            text: "Applications",
+            items: [
+              { text: "RookApp (Desktop)", link: "/documentation/desktop" },
+              { text: "Robotics Examples", link: "/documentation/robotics" },
+              { text: "ROS2 Integration", link: "/documentation/ros2" },
+            ],
+          },
+          {
+            text: "Architecture",
+            collapsed: true,
+            items: [
+              { text: "System Architecture", link: "/documentation/architecture" },
+              { text: "Component Design", link: "/documentation/components" },
             ],
           },
           {
             text: "Operations",
             items: [
               { text: "Monitoring & Logging", link: "/documentation/monitoring" },
-            ],
-          },
-          {
-            text: "Reports",
-            collapsed: false,
-            items: [
               {
                 text: "SLM tool-calling benchmark",
                 link: "/documentation/reports/slm-tool-calling-benchmark",

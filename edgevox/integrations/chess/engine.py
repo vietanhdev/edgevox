@@ -343,10 +343,10 @@ class MaiaEngine(_SimpleEngineWrapper):
 def build_engine(kind: str, **kwargs: Any) -> ChessEngine:
     """Resolve a ``kind`` string to a configured :class:`ChessEngine`.
 
-    Centralising this here keeps the ``--engine`` CLI flag on
-    ``chess_partner.py`` a thin lookup instead of a sprawl of if-trees.
-    Unknown kinds raise :class:`EngineUnavailable` so the CLI can print
-    a clear error and list what was expected.
+    Centralising this here keeps ``--engine`` flag handling on the
+    RookApp side a thin lookup instead of a sprawl of if-trees.
+    Unknown kinds raise :class:`EngineUnavailable` so callers can
+    print a clear error and list what was expected.
     """
     key = kind.lower().strip()
     if key == "stockfish":

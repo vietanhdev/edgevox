@@ -62,15 +62,6 @@ def _lazy_subcommands() -> None:
     except ImportError:
         pass
 
-    # Chess partner — python-chess is core; needs a UCI engine on $PATH.
-    try:
-        from edgevox.examples.agents.chess_partner import APP as CHESS_APP
-        from edgevox.examples.agents.chess_partner import main as chess_main
-
-        _register("chess", CHESS_APP.description, chess_main)
-    except ImportError:
-        pass
-
     # RookApp — voice chess against an expressive robot. Native Qt
     # desktop app; no browser, no server sidecar. Optional install:
     # ``pip install "edgevox[desktop]"``.

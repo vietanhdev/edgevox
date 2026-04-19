@@ -1,9 +1,8 @@
 """Persona bundles — system prompt + voice + default engine per archetype.
 
-Each persona is a ready-to-go configuration. The ``--persona`` flag on
-``chess_partner.py`` picks one by slug; ``resolve_persona`` returns a
-:class:`Persona` the example wires into :class:`LLMAgent` +
-:class:`ChessEnvironment`.
+Each persona is a ready-to-go configuration. RookApp's ``--persona``
+flag picks one by slug; ``resolve_persona`` returns a :class:`Persona`
+that gets wired into :class:`LLMAgent` + :class:`ChessEnvironment`.
 
 Keeping personas here (instead of as free-form YAML) means a typo
 in ``--persona casul`` fails loudly with a list of valid choices
