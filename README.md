@@ -3,8 +3,16 @@
 **Offline voice agent framework for robots.**
 **Sub-second local voice pipeline. Fully private.**
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![PyPI version](https://img.shields.io/pypi/v/edgevox.svg?color=4c1)](https://pypi.org/project/edgevox/)
+[![Python versions](https://img.shields.io/pypi/pyversions/edgevox.svg)](https://pypi.org/project/edgevox/)
+[![License: MIT](https://img.shields.io/pypi/l/edgevox.svg?color=green)](https://github.com/vietanhdev/edgevox/blob/main/LICENSE)
+[![Downloads](https://img.shields.io/pypi/dm/edgevox.svg?label=PyPI%20downloads&color=blue)](https://pypistats.org/packages/edgevox)
+[![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)](https://github.com/vietanhdev/edgevox/releases/latest)
+
+[![CI](https://github.com/vietanhdev/edgevox/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/vietanhdev/edgevox/actions/workflows/ci.yml)
+[![RookApp Desktop](https://github.com/vietanhdev/edgevox/actions/workflows/rookapp-desktop.yml/badge.svg?branch=main)](https://github.com/vietanhdev/edgevox/actions/workflows/rookapp-desktop.yml)
+[![Docs](https://img.shields.io/badge/docs-edgevox.nrl.ai-blue)](https://edgevox.nrl.ai)
+[![GitHub stars](https://img.shields.io/github/stars/vietanhdev/edgevox?style=social)](https://github.com/vietanhdev/edgevox/stargazers)
 
 <table>
   <tr>
