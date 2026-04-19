@@ -404,6 +404,26 @@ Workflows compose agents. Every workflow implements the `Agent` protocol so nest
 | `Supervisor.build()` | Same wire-shape as `Router` but forces `required_first_hop` — every turn must dispatch to a worker | "Every message goes to a worker, no chit-chat fallback" |
 | `Orchestrator` | Lead LLM emits a JSON plan; `spawn_subagent` runs each subtask with scoped tools; lead synthesises | Anthropic-style plan → fan-out → synthesise |
 
+### Parallel — fan-out to N specialists, one reduced reply
+
+```python
+from edgevox.agents import LLMAgent, Parallel
+
+lookup = LLMAgent(name="lookup",      description="Search notes",    instructions="...", tools=[search_notes])
+weather = LLMAgent(name="weather",    description="Weather lookup",  instructions="...", tools=[get_weather])
+calendar = LLMAgent(name="calendar",  description="Calendar lookup", instructions="...", tools=[next_event])
+
+morning_briefing = Parallel(
+    name="morning",
+    agents=[lookup, weather, calendar],
+    reduce=lambda results: "\n\n".join(r.reply for r in results if r.reply),
+)
+
+result = morning_briefing.run("what should I know this morning?")
+```
+
+Each sub-agent runs on its own worker with its own `Session`, so their tool histories don't cross-contaminate. The shared `LLM` serialises inference via its internal lock — the speedup comes from overlapping non-LLM work (tool dispatch, skill worker threads, I/O waits). Pair with the [Blackboard](/documentation/multiagent#blackboard) pattern when you want an agent pool to self-select rather than be explicitly enumerated.
+
 ### Router + handoff — the voice-optimized multi-agent pattern
 
 Handoff-as-return-value (OpenAI Agents SDK style) saves one LLM hop per delegation vs. smolagents' "sub-agent-as-tool":

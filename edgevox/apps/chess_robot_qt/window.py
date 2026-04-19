@@ -229,6 +229,16 @@ class RookWindow(QMainWindow):
         snap = self._bridge.snapshot()
         if snap is not None:
             self._board.set_state(snap)
+        # Replay the persisted chat transcript so the user sees their
+        # prior exchanges after a restart. The bridge already restores
+        # the session for the agent's context; this closes the UI gap so
+        # the chat widget isn't empty while the board shows a mid-game
+        # position. Safe to call with an empty history (no-op).
+        for role, text in self._bridge.session_messages():
+            if role == "user":
+                self._chat.add_user(text)
+            elif role == "assistant":
+                self._chat.add_rook(text)
 
     def _on_state(self, state: str) -> None:
         label = {

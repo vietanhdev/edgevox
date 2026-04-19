@@ -114,3 +114,40 @@ class TestAppBoots:
         assert window.windowTitle() == "RookApp"
         # Ensure the frameless hint is applied.
         assert window.windowFlags() & Qt.WindowType.FramelessWindowHint
+
+
+class TestSessionReplay:
+    """``RookBridge.session_messages`` feeds the chat widget on launch."""
+
+    def test_filters_out_system_and_tool_and_empty(self):
+        from edgevox.agents import Session
+        from edgevox.apps.chess_robot_qt.bridge import RookBridge, RookConfig
+
+        bridge = RookBridge(RookConfig())
+        bridge._ctx_session = Session(
+            messages=[
+                {"role": "system", "content": "you are Rook…"},
+                {"role": "user", "content": "e4"},
+                {"role": "assistant", "content": "Classical opener."},
+                {"role": "system", "content": "[CHESS BRIEFING]\nFEN…\n[END BRIEFING]"},
+                {"role": "user", "content": "Nf3"},
+                # Silent turn — the assistant chose <silent>, persisted as empty
+                {"role": "assistant", "content": ""},
+                {"role": "tool", "content": "{...}"},
+                {"role": "user", "content": "  "},  # whitespace-only, drop
+            ]
+        )
+        out = bridge.session_messages()
+        assert out == [
+            ("user", "e4"),
+            ("assistant", "Classical opener."),
+            ("user", "Nf3"),
+        ]
+
+    def test_empty_session_returns_empty_list(self):
+        from edgevox.apps.chess_robot_qt.bridge import RookBridge, RookConfig
+
+        bridge = RookBridge(RookConfig())
+        # ``_ctx_session`` is None until ``_build`` runs — replay must
+        # handle that safely so pre-ready ``_on_ready`` calls don't fail.
+        assert bridge.session_messages() == []

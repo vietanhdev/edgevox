@@ -55,6 +55,7 @@ from edgevox.examples.agents.chess_robot.rich_board import RichChessAnalyticsHoo
 from edgevox.examples.agents.chess_robot.sanitize import (
     BriefingLeakGuard,
     SentenceClipHook,
+    SilenceSentinelHook,
     ThinkTagStripHook,
     VoiceCleanupHook,
 )
@@ -361,6 +362,32 @@ class RookBridge:
         # and persona label even before the next agent reply fires.
         self.signals.face_changed.emit({"mood": "calm", "tempo": "idle", "persona": slug})
 
+    # ----- session replay -----
+
+    def session_messages(self) -> list[tuple[str, str]]:
+        """Return the restored chat transcript as ``(role, text)`` pairs
+        for the UI to replay on launch.
+
+        Filters to the two roles the chat widget renders — ``"user"`` and
+        ``"assistant"``. System messages (the persona prompt + the
+        runtime-injected chess briefing) are context the agent needs but
+        not speech the user ever said or heard, so they're skipped.
+        Empty-content messages are dropped too; those are silent-reply
+        turns, and replaying them as blank bubbles would be misleading.
+        """
+        if self._ctx_session is None:
+            return []
+        out: list[tuple[str, str]] = []
+        for msg in self._ctx_session.messages:
+            role = msg.get("role")
+            if role not in ("user", "assistant"):
+                continue
+            content = (msg.get("content") or "").strip()
+            if not content:
+                continue
+            out.append((role, content))
+        return out
+
     # ----- debug -----
 
     def set_debug_mode(self, on: bool) -> None:
@@ -659,6 +686,11 @@ class RookBridge:
                 MemoryInjectionHook(memory_store=self._memory),
                 NotesInjectorHook(notes=self._notes),
                 ContextCompactionHook(compactor=Compactor()),
+                # Silence sentinel runs first among the AFTER_LLM
+                # sanitizers (priority 80) so empty-reply fallbacks in
+                # the other hooks don't resurrect a reply Rook chose to
+                # skip.
+                SilenceSentinelHook(),
                 ThinkTagStripHook(),
                 BriefingLeakGuard(),
                 VoiceCleanupHook(),
@@ -737,10 +769,13 @@ You are Rook, a chess robot playing against a human. You speak with your persona
 Before every turn the system shows you a [CHESS BRIEFING ...] block with the current position, your side, the user's side, the evaluation, and the top engine lines. Read it quietly. Do NOT recite it — use it as background knowledge while you speak naturally.
 
 Speaking rules:
-- Talk like a person, not a search engine. Short, natural, one or two sentences. Contractions are good.
+- You are NOT required to speak every turn. Most routine moves don't deserve a comment — a quiet opponent feels more natural than one who narrates every pawn push.
+- To stay silent, reply with exactly the single token `<silent>` and nothing else. The app treats that as "say nothing" and shows no bubble.
+- Speak when something is actually worth saying: a capture of real value, a check or checkmate threat, a blunder, a clever or surprising move, a greeting at the start, a reaction at the end of the game. Otherwise, prefer silence.
+- Talk like a person, not a search engine. Short, natural, one sentence is usually enough. Contractions are good.
 - Your replies are spoken by a TTS engine later: no markdown, no asterisks, no bullets, no emoji, no <think> tags, no lists.
 - Only reference moves that actually happened (the last move by the user and your reply). Never invent or speculate.
-- Vary your phrasing. If you catch yourself starting several turns the same way ("X is a bold move…"), change it up.
+- Vary your phrasing. If you catch yourself starting several turns the same way ("X is a bold move…"), change it up — or stay silent.
 - Don't explain chess theory unless the user explicitly asks for analysis."""
 
 

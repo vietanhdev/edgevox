@@ -128,10 +128,11 @@ chips, persona label, and face highlight:
 Everything is stored under Qt's per-user `AppDataLocation` (falls back to
 `~/.rookapp` on bare headless CI):
 
-- `memory.json` — `JSONMemoryStore` for long-term facts
+- `memory.db` — `SQLiteMemoryStore` in WAL mode for long-term facts, crash-safe atomic writes. Older installs that wrote `memory.json` are migrated transparently on first launch; the legacy file is renamed to `memory.json.migrated` and left in place as a backup.
 - `notes.md` — `NotesFile` scratchpad the `NotesInjectorHook` reads
-- `sessions/…` — `JSONSessionStore` chat history, restored on next launch
-- `QSettings` — platform-native registry/plist/INI for preferences
+- `sessions.json` — `JSONSessionStore` chat history, restored on next launch
+- `game.json` — board + move history (FEN + SAN), so a crashed match resumes exactly where it was
+- `QSettings` — platform-native registry/plist/INI for UI preferences (piece set, board theme, audio devices)
 
 **New game** wipes all four so commentary from a previous game can't leak
 into a fresh board.

@@ -120,13 +120,29 @@ pip install 'edgevox[memory-vec]'
 ```
 
 ```python
-from edgevox.llm import LLM
+from llama_cpp import Llama
 from edgevox.agents import VectorMemoryStore, llama_embed
 
-llm = LLM(model_path="nomic-embed-text-v1.5.Q4_K_M.gguf", embedding=True)
-store = VectorMemoryStore("./vec.db", embed_fn=llama_embed(llm))
+# Any embedding-enabled GGUF works; nomic-embed-text is a good small default.
+embedder = Llama(
+    model_path="nomic-embed-text-v1.5.Q4_K_M.gguf",
+    embedding=True,
+    n_ctx=2048,
+    verbose=False,
+)
+
+store = VectorMemoryStore("./vec.db", embed_fn=llama_embed(embedder))
+store.add_fact("user.allergies", "peanuts, shellfish")
 hits = store.search_facts("what's safe to cook?", k=5)
+for fact, distance in hits:
+    print(f"{distance:.3f}  {fact.key}: {fact.value}")
 ```
+
+``llama_embed`` accepts either the framework's ``LLM`` (if it was built
+with an embedding-capable backend) or a raw ``llama_cpp.Llama``
+instance. For most users the latter is simpler — spinning up a second,
+dedicated embedding model keeps it from fighting the main LLM for
+sampling time.
 
 **Disable memory entirely:** don't register `MemoryInjectionHook` on the agent. The agent runs fine without a memory store; each turn just starts fresh.
 
@@ -339,19 +355,22 @@ Every category above is a **Protocol** — a typed shape the framework calls. Yo
 
 ```python
 from edgevox.stt import BaseSTT
+import numpy as np
 
 class MySTT(BaseSTT):
-    display_name = "MyCustomSTT"
+    _backend_name = "mystt"     # feeds the default ``display_name`` property
 
-    def transcribe(self, audio, language: str = "en") -> str:
+    def transcribe(self, audio: np.ndarray, language: str = "en") -> str:
         # audio is a float32 numpy array @ 16 kHz
         return self._my_model(audio)
-
-# Use it:
-from edgevox.agents import LLMAgent
-agent = LLMAgent(...)
-agent.bind_stt(MySTT())           # or inject via your own pipeline
 ```
+
+Drop into a pipeline by passing your instance wherever the default
+`create_stt(...)` result would go — ``PipelineConfig(stt=MySTT(), ...)``
+for the streaming pipeline, or the `stt=` kwarg of whatever higher-level
+factory you're using. STT isn't attached to the `LLMAgent` directly — it
+lives one layer up, producing the text that the agent's `run(...)`
+consumes.
 
 ### Custom TTS backend
 
@@ -361,7 +380,7 @@ import numpy as np
 
 class MyTTS(BaseTTS):
     sample_rate = 24_000
-    display_name = "MyCustomTTS"
+    _backend_name = "mytts"
 
     def synthesize(self, text: str) -> np.ndarray:
         return self._model.run(text)
@@ -371,6 +390,8 @@ class MyTTS(BaseTTS):
         for sentence in split(text):
             yield self._model.run(sentence)
 ```
+
+Same injection story as STT: the pipeline owns the TTS instance, not the agent.
 
 ### Custom memory store
 
@@ -442,37 +463,64 @@ Priority guide: Safety=100, Business=50, Observability=0. The built-ins follow t
 
 ### Custom workflow
 
-Subclass `Agent` — the same Protocol `LLMAgent` implements:
+Implement the `Agent` Protocol — `name: str`, `run(task, ctx) -> AgentResult`, `run_stream(task, ctx) -> Iterator[str]`. `LLMAgent` and every shipped workflow already do this, so your class composes with them.
 
 ```python
-from edgevox.agents import Agent, AgentContext, AgentResult
+from collections.abc import Iterator
+
+from edgevox.agents import AgentContext, AgentResult
+from edgevox.agents.base import Agent
 
 class RoundRobin:
-    name = "round-robin"
-    description = "Alternate between agents on successive calls"
+    """Alternate between sub-agents on successive calls."""
 
-    def __init__(self, agents: list[Agent]):
+    def __init__(self, name: str, agents: list[Agent]):
+        self.name = name
         self._agents = agents
         self._idx = 0
 
-    def run(self, user_input: str, ctx: AgentContext) -> AgentResult:
+    def run(self, task: str, ctx: AgentContext) -> AgentResult:
         a = self._agents[self._idx % len(self._agents)]
         self._idx += 1
-        return a.run(user_input, ctx)
+        return a.run(task, ctx)
+
+    def run_stream(self, task: str, ctx: AgentContext) -> Iterator[str]:
+        a = self._agents[self._idx % len(self._agents)]
+        self._idx += 1
+        yield from a.run_stream(task, ctx)
 ```
 
 Anywhere the framework takes an `Agent` (workflow child, handoff target, background worker) you can pass this.
 
 ### Custom LLM backend
 
-Match the surface `LLMAgent` calls: `chat_stream(messages, *, stop_event=None, **kwargs)` yielding tokens, plus `count_tokens(text) -> int`. Wrap Anthropic / OpenAI / Ollama / vLLM / your-own-thing, then:
+Match the surface `LLMAgent` calls — a single `complete(...)` method that returns an OpenAI-shaped response dict:
 
 ```python
+class MyLLM:
+    def complete(
+        self,
+        messages: list[dict],
+        *,
+        tools: list[dict] | None = None,
+        tool_choice: str | dict = "auto",
+        stream: bool = False,
+        stop_event: threading.Event | None = None,
+        grammar: object | None = None,
+    ) -> dict:
+        # Must return {"choices": [{"message": {"content": str,
+        #                                        "tool_calls": list | None}}]}
+        ...
+
+    def count_tokens(self, text: str) -> int:
+        # Only used by TokenBudgetHook / Compactor when passed ``ctx.llm``.
+        return len(text) // 4   # stub
+
 agent = LLMAgent(...)
 agent.bind_llm(MyLLM())
 ```
 
-The agent loop only cares about the two-method contract — no assumptions about what's under the hood.
+`stop_event` is how barge-in halts generation mid-decode — your backend should poll it in the sampling loop. `grammar` is optional (llama-cpp GBNF or equivalent); backends that can't grammar-constrain can ignore it. The agent loop falls back gracefully for older shims via a `TypeError` catch — so it's safe to implement only the subset you support.
 
 ---
 
@@ -485,15 +533,17 @@ Every knob, by component. Defaults are what you get from a bare `LLMAgent(...)` 
 | arg | default | meaning |
 |---|---|---|
 | `name` | required | human-facing identifier |
-| `description` | required | advertised in agent handoffs |
+| `description` | required | advertised to handoff targets + workflows |
 | `instructions` | required | system prompt |
-| `tools` | `None` | list of `@tool` callables or `Tool` objects |
-| `hooks` | `[]` | list of hook objects |
-| `max_tool_calls` | `8` | hops per turn before abort |
+| `tools` | `None` | list of `@tool` callables, `Tool` objects, or a `ToolRegistry` |
+| `skills` | `None` | list of `Skill` objects (cancellable long-running tasks) |
+| `llm` | `None` | pre-bound `LLM` instance; otherwise set via `agent.bind_llm(...)` |
+| `handoffs` | `None` | agents this one can hand off to |
+| `hooks` | `None` | list of hook objects |
+| `max_tool_hops` | `3` | tool-call hops per turn before abort |
 | `tool_choice_policy` | `"auto"` | `"auto"` / `"required_first_hop"` / `"required_always"` |
-| `parallel_tool_dispatch` | `False` | fan out independent tool calls via thread pool |
-| `handoffs` | `[]` | agents this one can hand off to |
-| `stream_events` | `True` | emit per-token / per-event signals via `ctx.on_event` |
+
+Parallel tool-call dispatch happens automatically inside `_drive` when the LLM emits multiple `tool_calls` in a single response — no flag needed. Agent events are always published via `ctx.on_event` / the bus; subscribers attach via `ctx.bus.subscribe(...)`.
 
 ### `MemoryStore` implementations
 
@@ -532,22 +582,23 @@ All three honour `max_facts` / `max_episodes` on `render_for_prompt`.
 
 | knob | default | meaning |
 |---|---|---|
-| `max_context_tokens` | `3500` | trigger summarisation above |
-| `keep_last` | `6` | never summarise the most-recent N turns |
-| `target_tokens` | `1500` | summary size budget |
+| `trigger_tokens` | `4000` | summarise when the session crosses this count |
+| `keep_last_turns` | `4` | never summarise the most-recent N user/assistant turns |
 
 ### STT
 
 Per language, resolved via `edgevox.core.config.get_lang(code)`. Override per-call:
 
 ```python
-create_stt(language="en", model_size="large-v3", device="cuda", backend="whisper")
+create_stt(language="en", model_size="large-v3", device="cuda")
+# model_size="sherpa" routes to the Sherpa-ONNX Vietnamese backend
 ```
 
 ### TTS
 
 ```python
-create_tts(language="en", voice="af_heart", backend="kokoro", speed=1.0)
+create_tts(language="en", voice="af_heart", backend="kokoro")
+# backend one of "kokoro" / "piper" / "supertonic" / "pythaitts" (or None for language default)
 ```
 
 ### RookApp (desktop)

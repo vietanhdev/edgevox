@@ -35,18 +35,23 @@ A `Protocol`; three implementations ship:
 
 | Class | Backing | Use case |
 |---|---|---|
-| `JSONMemoryStore` | debounced JSON file | default; simple, human-readable, thread-safe |
-| `SQLiteMemoryStore` | stdlib `sqlite3` + WAL mode | crash-safe (immediate atomic writes), multi-process-safe, queryable |
-| `VectorMemoryStore` | `sqlite-vec` extension + injectable `embed_fn` | semantic retrieval over facts — `store.search_facts("what's safe to cook?", k=3)` |
+| **`SQLiteMemoryStore`** *(recommended default)* | stdlib `sqlite3` + WAL mode | crash-safe atomic writes, multi-process-safe, indexed `facts_as_of(t)` queries |
+| `JSONMemoryStore` | debounced JSON file | prototyping, human-readable inspection |
+| `VectorMemoryStore` | `sqlite-vec` extension + injectable `embed_fn` | semantic retrieval — `store.search_facts("what's safe to cook?", k=3)`; opt in via `pip install 'edgevox[memory-vec]'` |
 
 All three share the same bi-temporal semantics and render-for-prompt layout, so swapping stores doesn't change what the LLM sees. `VectorMemoryStore` is in the `[memory-vec]` extra; the embedding model is user-supplied via `embed_fn=...` (e.g. `llama_embed(llm)` to reuse a `llama-cpp` instance loaded with `embedding=True`).
 
 ```python
-from edgevox.llm.llamacpp import LLM
+from llama_cpp import Llama
 from edgevox.agents import VectorMemoryStore, llama_embed
 
-llm = LLM(model_path="nomic-embed-text-v1.5.Q4_K_M.gguf", embedding=True)
-store = VectorMemoryStore("./vec.db", embed_fn=llama_embed(llm))
+embedder = Llama(
+    model_path="nomic-embed-text-v1.5.Q4_K_M.gguf",
+    embedding=True,
+    n_ctx=2048,
+    verbose=False,
+)
+store = VectorMemoryStore("./vec.db", embed_fn=llama_embed(embedder))
 store.add_fact("user.allergies", "peanuts, shellfish")
 store.add_fact("kitchen.fridge.contents", "milk, eggs, cheese")
 for fact, distance in store.search_facts("what's safe to cook?", k=3):
@@ -54,6 +59,26 @@ for fact, distance in store.search_facts("what's safe to cook?", k=3):
 ```
 
 Write your own backend (Redis, Mongo, remote HTTP, …) by implementing the `MemoryStore` Protocol — the four built-in hooks that consume a store (`MemoryInjectionHook`, `NotesInjectorHook`, `PersistSessionHook`, `ContextCompactionHook`) read through the Protocol, never the concrete class.
+
+### `SessionStore` — per-conversation history
+
+Distinct from the per-user `MemoryStore`: a `SessionStore` persists an entire `Session` (messages, tool-call history, state dict) keyed by session-id so a user can resume a conversation after a restart. Two implementations ship:
+
+| Class | Backing | Use case |
+|---|---|---|
+| `JSONSessionStore` | one JSON file per session | default, human-readable, fine through ~500 turns / 100 sessions |
+| `SQLiteSessionStore` | stdlib `sqlite3` with a single `sessions` table | multi-user services, thousands of sessions, indexed lookup by `updated_at` |
+
+Both implement the same three-method `SessionStore` Protocol (`load(id) / save(session) / delete(id)`), so `PersistSessionHook` reads through the Protocol:
+
+```python
+from edgevox.agents import PersistSessionHook, SQLiteSessionStore
+
+sessions = SQLiteSessionStore("./sessions.db")
+agent = LLMAgent(..., hooks=[PersistSessionHook(session_store=sessions, session_id="user-42")])
+```
+
+Swap the store without changing the agent code — the JSONSessionStore → SQLite migration is a one-line change the same way JSON → SQLite memory is.
 
 ### Data model
 

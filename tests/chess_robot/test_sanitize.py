@@ -7,6 +7,7 @@ from edgevox.agents.hooks import AFTER_LLM
 from edgevox.examples.agents.chess_robot.sanitize import (
     BriefingLeakGuard,
     SentenceClipHook,
+    SilenceSentinelHook,
     ThinkTagStripHook,
     VoiceCleanupHook,
 )
@@ -218,6 +219,54 @@ class TestBriefingLeakGuard:
         hook = BriefingLeakGuard()
         content = "I'll play the French. Your move."
         assert _run(hook, content) == content
+
+
+class TestSilenceSentinelHook:
+    def test_strips_angle_sentinel(self):
+        hook = SilenceSentinelHook()
+        out = _run(hook, "<silent>")
+        assert out == ""
+
+    def test_strips_square_sentinel(self):
+        hook = SilenceSentinelHook()
+        out = _run(hook, "[silent]")
+        assert out == ""
+
+    def test_strips_paren_sentinel(self):
+        hook = SilenceSentinelHook()
+        out = _run(hook, "(silent)")
+        assert out == ""
+
+    def test_case_insensitive(self):
+        hook = SilenceSentinelHook()
+        assert _run(hook, "<SILENT>") == ""
+        assert _run(hook, "<Silent>") == ""
+
+    def test_sentinel_with_prefix_is_still_silenced(self):
+        """If the model hedges and says a little before the sentinel,
+        we honour the silence intent and drop everything — otherwise
+        the model learns to prepend filler before `<silent>` and the
+        feature becomes useless."""
+        hook = SilenceSentinelHook()
+        out = _run(hook, "Your move. <silent>")
+        assert out == ""
+
+    def test_plain_reply_passthrough(self):
+        hook = SilenceSentinelHook()
+        content = "Nice knight outpost on d5."
+        assert _run(hook, content) == content
+
+    def test_empty_reply_passthrough(self):
+        """Empty content is already silent — the hook shouldn't fire."""
+        hook = SilenceSentinelHook()
+        out = _run(hook, "")
+        assert out == ""
+
+    def test_runs_before_think_strip_and_briefing_guard(self):
+        """Priority must be high enough that downstream hooks' empty-
+        reply fallbacks (filler phrases) can't resurrect the silence."""
+        assert SilenceSentinelHook.priority > ThinkTagStripHook.priority
+        assert SilenceSentinelHook.priority > BriefingLeakGuard.priority
 
 
 class TestHookPointRegistration:

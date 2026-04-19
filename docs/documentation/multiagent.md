@@ -82,6 +82,27 @@ result = pool.run("router", "What's the temperature?")
 
 `pool.make_ctx(**overrides)` builds an `AgentContext` pre-wired with the shared bus + blackboard so every agent sees consistent shared state.
 
+### Pool + Parallel — fan-out across the pool
+
+`AgentPool` and the [`Parallel` workflow](/documentation/agents#parallel-fan-out-to-n-specialists-one-reduced-reply) compose cleanly:
+
+```python
+from edgevox.agents import AgentPool, LLMAgent, Parallel
+
+pool = AgentPool()
+pool.register(lookup_agent)
+pool.register(weather_agent)
+pool.register(calendar_agent)
+
+morning = Parallel(
+    name="morning",
+    agents=[pool.get("lookup"), pool.get("weather"), pool.get("calendar")],
+)
+result = morning.run("morning briefing?", ctx=pool.make_ctx())
+```
+
+`pool.make_ctx()` ensures every sub-agent sees the same bus + blackboard, so a background agent listening on `*` will observe the children's events. Combine with `bb.post_request(...)` when you want dynamic membership — the pool's agents pick up requests by capability rather than being enumerated up front.
+
 ## Debouncing triggers
 
 `debounce_trigger(trigger, interval_s=…)` wraps any trigger so it fires at most once per interval — useful for sub-second sensor streams:

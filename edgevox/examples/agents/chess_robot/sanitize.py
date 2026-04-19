@@ -162,6 +162,46 @@ def _strip_outer_quotes(text: str) -> str:
     return text
 
 
+class SilenceSentinelHook:
+    """Let Rook stay quiet on routine moves.
+
+    A chess opponent who comments on every single move sounds
+    hyperactive and robotic. The prompt instructs the model to emit
+    ``<silent>`` (case-insensitive) on turns where there's nothing
+    worth saying. This hook catches that sentinel at ``AFTER_LLM``,
+    clears the reply payload, and lets the bridge's empty-reply guard
+    skip TTS + chat rendering for the turn.
+
+    Runs at priority 80 — ahead of :class:`ThinkTagStripHook` (70) and
+    :class:`BriefingLeakGuard` (68) — so their empty-reply fallback
+    fillers (``"Your move."`` etc.) don't resurrect the silence. We
+    strip unconditionally when the sentinel appears anywhere in the
+    output, even if the model prepended chatter, because the whole
+    point is "say nothing"; the alternative (keeping the prefix) just
+    teaches the model to hedge.
+
+    Recognised forms: ``<silent>``, ``[silent]``, ``(silent)``, case
+    insensitive. A plain whitespace-only reply is also treated as
+    silence.
+    """
+
+    points = frozenset({AFTER_LLM})
+    priority = 80
+
+    _SENTINEL_RE = re.compile(r"[<\[(]\s*silent\s*[>\])]", re.IGNORECASE)
+
+    def __call__(self, point: str, ctx: AgentContext, payload: dict) -> HookResult | None:
+        content = payload.get("content") or ""
+        if not content.strip():
+            return None  # Nothing to do — downstream already sees empty.
+        if not self._SENTINEL_RE.search(content):
+            return None
+        return HookResult.replace(
+            {**payload, "content": ""},
+            reason="silence sentinel — Rook chose to stay quiet",
+        )
+
+
 class BriefingLeakGuard:
     """Drop any chess-briefing text the model parrots back.
 
@@ -261,6 +301,7 @@ class SentenceClipHook:
 __all__ = [
     "BriefingLeakGuard",
     "SentenceClipHook",
+    "SilenceSentinelHook",
     "ThinkTagStripHook",
     "VoiceCleanupHook",
 ]

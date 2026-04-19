@@ -35,15 +35,11 @@ import time
 import uuid
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import numpy as np
 
 from edgevox.agents.memory import Episode, Fact, Preference
-
-if TYPE_CHECKING:
-    from edgevox.llm.llamacpp import LLM
-
 
 log = logging.getLogger(__name__)
 
@@ -62,11 +58,15 @@ class VectorMemoryStore:
 
     Example::
 
-        from edgevox.llm.llamacpp import LLM
+        from llama_cpp import Llama
         from edgevox.agents.memory_vec import VectorMemoryStore, llama_embed
 
-        llm = LLM(embedding=True)
-        store = VectorMemoryStore("./vec.db", embed_fn=llama_embed(llm))
+        embedder = Llama(
+            model_path="nomic-embed-text-v1.5.Q4_K_M.gguf",
+            embedding=True,
+            n_ctx=2048,
+        )
+        store = VectorMemoryStore("./vec.db", embed_fn=llama_embed(embedder))
         store.add_fact("user.allergies", "peanuts, shellfish")
         store.add_fact("kitchen.fridge.contents", "milk, eggs, cheese")
         hits = store.search_facts("what's safe to cook?", k=3)
@@ -479,24 +479,29 @@ class VectorMemoryStore:
 # ---------------------------------------------------------------------------
 
 
-def llama_embed(llm: LLM) -> EmbedFn:
-    """Wrap an ``LLM`` loaded with ``embedding=True`` as an :class:`EmbedFn`.
+def llama_embed(llm: Any) -> EmbedFn:
+    """Wrap a llama-cpp embedding handle as an :class:`EmbedFn`.
+
+    Accepts either a raw ``llama_cpp.Llama`` (loaded with
+    ``embedding=True``) or EdgeVox's ``LLM`` facade — the facade
+    exposes its inner ``Llama`` as ``llm._llm``; we auto-unwrap.
 
     Usage::
 
-        llm = LLM(model_path="...", embedding=True)
-        store = VectorMemoryStore("./vec.db", embed_fn=llama_embed(llm))
+        from llama_cpp import Llama
+        embedder = Llama(model_path="nomic-embed-text-v1.5.Q4_K_M.gguf",
+                         embedding=True, n_ctx=2048)
+        store = VectorMemoryStore("./vec.db", embed_fn=llama_embed(embedder))
 
     The returned callable takes a string and returns a numpy float32
-    array. It's thread-safe to call from multiple agents as long as the
-    underlying ``LLM`` instance is (which it is by default).
+    array. Thread-safe as long as the underlying ``Llama`` is — the
+    single-instance lock inside llama-cpp-python serialises ``embed``
+    calls across threads.
 
-    If you need a different embedding model than your main LLM, load a
-    separate ``LLM`` with a dedicated embedding-optimised GGUF (e.g.
-    ``nomic-embed-text-v1.5.Q4_K_M.gguf``) and pass that handle
-    instead.
+    Loading a *dedicated* embedding model keeps it from fighting the
+    main chat LLM for inference time. ``nomic-embed-text-v1.5``,
+    ``bge-small-en``, and ``e5-small-v2`` all ship in GGUF form.
     """
-
     inner = getattr(llm, "_llm", None) or llm  # unwrap our LLM facade
     if not hasattr(inner, "embed"):
         raise TypeError(
