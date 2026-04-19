@@ -11,7 +11,7 @@ Voice-agent UX lives or dies on how fast the pipeline shuts up when the user sta
 | LLM generation stops | **≤40 ms after trigger** | `cancel_token` piped into llama-cpp `stopping_criteria` |
 | Skill cancel (opt-in) | <200 ms | poll loop inside `_dispatch_skill` |
 
-The LLM number is the one that matters — before PR-1 wired the `cancel_token` through, a barge-in during a long reply left the LLM grinding through `max_tokens` for seconds.
+The LLM number is the one that matters — without the `cancel_token` threaded into `stopping_criteria`, a barge-in during a long reply would leave the LLM grinding through `max_tokens` for seconds.
 
 ## Two signals
 
@@ -148,18 +148,9 @@ This is what stopped the "interrupt only works once" failure mode where the reco
 
 ## VAD backends
 
-Today the only shipped watcher is `EnergyBargeInWatcher` — pure RMS threshold with echo-floor calibration + reference-signal gate, numpy-optional. The production pipeline uses Silero VAD on AEC-cleaned audio inside `AudioRecorder` (not this watcher) — `EnergyBargeInWatcher` is for users who write their own pipelines.
+The only shipped barge-in watcher is `EnergyBargeInWatcher` — pure RMS threshold with echo-floor calibration + reference-signal gate, numpy-optional. The production pipeline uses Silero VAD on AEC-cleaned audio inside `AudioRecorder` (not this watcher) — `EnergyBargeInWatcher` is for users who write their own pipelines and want a dependency-free default.
 
-Planned (PR-7):
-
-| Backend | Install | Latency | Accuracy notes |
-|---|---|---|---|
-| Energy (current) | built-in | <1 ms | 5–15% false triggers in noisy rooms |
-| `py-webrtcvad` | `pip install webrtcvad` | <1 ms | GMM baseline; much better than RMS |
-| Silero VAD (ONNX) | `edgevox[voice-vad]` | ~1 ms | community default; ~1–2% false triggers |
-| TEN VAD (ONNX) | `edgevox[voice-vad]` | <1 ms | 306 KB model; lowest latency |
-
-All four will implement one `BargeInVAD` Protocol. Document the trade-offs in this page when they land.
+If you need something more robust than RMS, wrap your own watcher behind the `BargeInVADWatcher` interface and plug it in via `InterruptController(watchers=[...])`.
 
 ## Subscribing to events
 

@@ -332,8 +332,6 @@ Mic → VAD → STT → AgentProcessor → SentenceSplit → TTS → Spk`"]
 
 The LLM never enters the reactive layer. Safety reflexes bypass it. Skills expose *intents* (`navigate_to(room)`), not *control* (`set_speed(mps)`). Every other design choice flows from this rule.
 
-Full architecture writeup: [`docs/plan.md`](docs/plan.md) — grounded in cross-framework research against ADK, smolagents, Pipecat, LangGraph, OpenAI Agents SDK, PydanticAI, VLA systems, and 7 simulators.
-
 ## Model sizes
 
 | Component | Model | Size | RAM |
@@ -351,7 +349,7 @@ Full architecture writeup: [`docs/plan.md`](docs/plan.md) — grounded in cross-
 ## Documentation
 
 - **[Agents & Tools guide](docs/documentation/agents.md)** — full agent framework reference: tools vs skills, workflows, safety monitor, simulation tiers, threading model, anti-patterns
-- **[Architecture plan](docs/plan.md)** — v4 plan grounded in 8-framework + 7-sim comparison
+- **[Architecture](docs/documentation/architecture.md)** — streaming pipeline deep-dive
 - **[Quick start](docs/documentation/quickstart.md)**
 - **[TUI commands](docs/documentation/commands.md)**
 - **[ROS2 guide](docs/documentation/ros2.md)** — bridge topics, services, `execute_skill` action, TF2 / Nav2 / sensor interop, launch files

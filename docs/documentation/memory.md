@@ -31,12 +31,14 @@ flowchart LR
 
 ## `MemoryStore`
 
-A `Protocol`; two implementations ship today:
+A `Protocol`; two implementations ship:
 
 | Class | Backing | Use case |
 |---|---|---|
 | `JSONMemoryStore` | debounced JSON file | default; simple, human-readable, thread-safe |
-| `SQLiteMemoryStore` (PR-12, planned) | stdlib `sqlite3` | atomic writes, crash-safe, queryable |
+| `SQLiteMemoryStore` | stdlib `sqlite3` + WAL mode | crash-safe (immediate atomic writes), multi-process-safe, queryable |
+
+Both share the same bi-temporal semantics and render-for-prompt layout, so swapping stores doesn't change what the LLM sees. Write your own backend (Redis, vector DB, …) by implementing the `MemoryStore` Protocol.
 
 ### Data model
 
@@ -103,14 +105,23 @@ agent = LLMAgent(
 )
 ```
 
-## Roadmap
+## Memory-as-tools
 
-SOTA research (Letta/MemGPT, Mem0, Zep/Graphiti, Anthropic memory tool) suggests several upgrades tracked in the harness refactor queue:
+``memory_tools(store)`` returns a list of three ``Tool`` objects the LLM can call directly to curate memory during a turn: ``remember_fact``, ``forget_fact``, ``recall_fact``. Wire them into the agent the same way as any other tool:
 
-- **Bi-temporal facts** (PR-10): `valid_from`/`valid_to` + `supersedes` so the agent can answer "what did I believe at t?".
-- **Memory-as-tools** (PR-14+): let the SLM curate its own facts via `remember_fact` / `forget_fact` tools.
-- **Vector retrieval** (PR-14+): optional `VectorMemoryStore` backed by sqlite-vec + llama.cpp embedding mode — offline, MIT, reuses the already-loaded llama runtime.
-- **Importance/decay scoring**: prioritise episodes by recency × access × self-assigned importance rather than FIFO.
+```python
+from edgevox.agents.memory import JSONMemoryStore
+from edgevox.agents.memory_tools import memory_tools
+
+store = JSONMemoryStore("./memory.json")
+agent = LLMAgent(..., tools=memory_tools(store))
+```
+
+Drop tools via ``include=(...)`` — e.g. ``memory_tools(store, include=("recall_fact",))`` hides ``remember_fact`` and ``forget_fact`` when you inject memory via a hook and just want the LLM to look things up. Each call is scoped (default ``"global"``; pass ``user`` / ``env:<name>`` via the ``scope`` arg the model sees in the schema) and bypasses the debounce on ``JSONMemoryStore`` only for the in-memory state — run ``store.flush()`` (or rely on ``PersistSessionHook``) to commit to disk.
+
+## Bi-temporal facts
+
+`Fact` carries `valid_from` / `valid_to` plus a `supersedes` link to the fact it replaced. When you `add_fact` with the same key, the prior fact gets `valid_to = now` (and `invalidated_at = now`) and the new fact is appended with `supersedes` pointing at it. Lets the agent answer "what did I believe at t?" without destroying history.
 
 
 ## See also

@@ -28,6 +28,7 @@ import time
 import uuid
 from collections import deque
 from collections.abc import Callable, Iterator
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -64,11 +65,63 @@ class Blackboard:
 
     _UNSET = object()
 
-    def __init__(self) -> None:
+    def __init__(self, *, async_watchers: bool = False, max_watcher_workers: int = 4) -> None:
+        """Thread-safe shared key/value store.
+
+        When ``async_watchers=True`` watcher callbacks run on a private
+        ``ThreadPoolExecutor`` (size ``max_watcher_workers``) instead of
+        the writer thread. A slow observer then can't stall ``set()`` /
+        ``delete()`` for other agents. The trade-off: watchers observe
+        writes in scheduling order but not strict commit order under
+        contention — if you need that, stay on the default synchronous
+        fan-out. The executor is created lazily on first async dispatch
+        and released via :meth:`close`.
+        """
         self._lock = threading.RLock()
         self._data: dict[str, Any] = {}
         self._watchers: dict[str, list[BlackboardHandler]] = {}
         self._wild_watchers: list[BlackboardHandler] = []
+        self._async_watchers = bool(async_watchers)
+        self._max_watcher_workers = int(max_watcher_workers)
+        self._watcher_pool: ThreadPoolExecutor | None = None
+
+    # -- internal ---------------------------------------------------------
+
+    def _dispatch(self, watchers: list[BlackboardHandler], key: str, old: Any, new: Any) -> None:
+        """Fan watchers out synchronously or via the lazy pool."""
+        if not watchers:
+            return
+        if not self._async_watchers:
+            for w in watchers:
+                try:
+                    w(key, old, new)
+                except Exception:
+                    log.exception("Blackboard watcher raised on %s", key)
+            return
+        pool = self._ensure_pool()
+        for w in watchers:
+            pool.submit(self._invoke_safe, w, key, old, new)
+
+    def _ensure_pool(self) -> ThreadPoolExecutor:
+        # Lazy: users of the synchronous Blackboard never pay for a
+        # thread pool, and the test suite's ``Blackboard()`` doesn't
+        # have to ``close()`` anything.
+        with self._lock:
+            if self._watcher_pool is None:
+                self._watcher_pool = ThreadPoolExecutor(
+                    max_workers=self._max_watcher_workers,
+                    thread_name_prefix="bb-watcher",
+                )
+            return self._watcher_pool
+
+    @staticmethod
+    def _invoke_safe(handler: BlackboardHandler, key: str, old: Any, new: Any) -> None:
+        try:
+            handler(key, old, new)
+        except Exception:
+            log.exception("Blackboard async watcher raised on %s", key)
+
+    # -- public API -------------------------------------------------------
 
     def get(self, key: str, default: Any = None) -> Any:
         with self._lock:
@@ -80,11 +133,7 @@ class Blackboard:
             self._data[key] = value
             watchers = list(self._watchers.get(key, ())) + list(self._wild_watchers)
         old_visible = None if old is self._UNSET else old
-        for w in watchers:
-            try:
-                w(key, old_visible, value)
-            except Exception:
-                log.exception("Blackboard watcher raised on %s", key)
+        self._dispatch(watchers, key, old_visible, value)
 
     def update(self, mapping: dict[str, Any]) -> None:
         for k, v in mapping.items():
@@ -96,12 +145,20 @@ class Blackboard:
                 return False
             old = self._data.pop(key)
             watchers = list(self._watchers.get(key, ())) + list(self._wild_watchers)
-        for w in watchers:
-            try:
-                w(key, old, None)
-            except Exception:
-                log.exception("Blackboard watcher raised on %s delete", key)
+        self._dispatch(watchers, key, old, None)
         return True
+
+    def close(self) -> None:
+        """Shut down the async-watcher pool if one was started.
+
+        Synchronous blackboards never start a pool and ``close()`` is a
+        cheap no-op; async blackboards should call this on shutdown to
+        avoid leaking threads.
+        """
+        with self._lock:
+            pool, self._watcher_pool = self._watcher_pool, None
+        if pool is not None:
+            pool.shutdown(wait=True, cancel_futures=True)
 
     def keys(self) -> list[str]:
         with self._lock:
@@ -132,6 +189,80 @@ class Blackboard:
                         self._watchers[key].remove(handler)
 
         return unsubscribe
+
+    # -- request/reply pattern -------------------------------------------
+
+    def post_request(
+        self,
+        request_key: str,
+        task: Any,
+        *,
+        reply_key: str | None = None,
+        timeout: float | None = None,
+    ) -> Future[Any]:
+        """Post a task on ``request_key`` and return a Future for the reply.
+
+        Subordinate agents watching ``request_key`` self-select based on
+        their capability, run the work, and call :meth:`reply_to` (or
+        ``set(reply_key, result)`` directly). The returned Future
+        resolves the moment a reply lands at ``reply_key``; no busy
+        polling. If ``timeout`` elapses first the Future is completed
+        with a ``TimeoutError``.
+
+        This is a thin convenience wrapper on top of ``set`` + ``watch``
+        — it doesn't introduce a new coordination primitive, it just
+        removes the boilerplate of wiring the reply path yourself.
+
+        Example::
+
+            fut = bb.post_request("plan.request", {"goal": "pick cup"}, timeout=5.0)
+            plan = fut.result()  # blocks up to 5 s
+
+        ``reply_key`` defaults to ``<request_key>.reply.<uuid>`` so
+        concurrent requests on the same ``request_key`` don't collide.
+        """
+        if reply_key is None:
+            reply_key = f"{request_key}.reply.{uuid.uuid4().hex[:8]}"
+        fut: Future[Any] = Future()
+
+        def _on_reply(_k: str, _old: Any, new: Any) -> None:
+            if not fut.done():
+                fut.set_result(new)
+
+        unsub = self.watch(reply_key, _on_reply)
+        # Hook the future's state so callers can still do ``fut.cancel()``
+        # without leaking a watcher registration.
+        fut.add_done_callback(lambda _f: unsub())
+
+        if timeout is not None:
+
+            def _timeout() -> None:
+                if not fut.done():
+                    fut.set_exception(TimeoutError(f"post_request({request_key!r}) timed out after {timeout:.3f}s"))
+
+            timer = threading.Timer(timeout, _timeout)
+            timer.daemon = True
+            timer.start()
+            fut.add_done_callback(lambda _f: timer.cancel())
+
+        # Set the request LAST so watchers on ``request_key`` never see
+        # the task without a live reply path — avoids a race where a
+        # fast volunteer replies before we've installed the watch.
+        self.set(request_key, {"task": task, "reply_key": reply_key})
+        return fut
+
+    def reply_to(self, request: Any, result: Any) -> None:
+        """Deliver ``result`` to the reply path embedded in ``request``.
+
+        Works with the dict shape produced by :meth:`post_request`
+        (``{"task": ..., "reply_key": ...}``). Raises ``ValueError`` if
+        ``request`` isn't a valid request envelope — callers that
+        constructed their own envelope should just ``set(reply_key,
+        result)`` directly.
+        """
+        if not isinstance(request, dict) or "reply_key" not in request:
+            raise ValueError("reply_to expects a request envelope produced by post_request")
+        self.set(request["reply_key"], result)
 
 
 # ---------------------------------------------------------------------------

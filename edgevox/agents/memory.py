@@ -491,6 +491,354 @@ class JSONMemoryStore:
 
 
 # ---------------------------------------------------------------------------
+# SQLite-backed MemoryStore
+# ---------------------------------------------------------------------------
+
+
+class SQLiteMemoryStore:
+    """Durable, crash-safe :class:`MemoryStore` backed by stdlib ``sqlite3``.
+
+    Same bi-temporal semantics as :class:`JSONMemoryStore` — facts are
+    append-only, overwrites set ``valid_to`` + ``invalidated_at`` on the
+    prior row and insert a new row with ``supersedes`` pointing back —
+    but writes land on disk immediately via WAL-mode atomic
+    transactions. Preferred when:
+
+    * Multiple processes may touch the same store (WAL mode allows
+      concurrent readers alongside a single writer).
+    * A process crash / kill-9 between debounced JSON flushes would
+      lose facts the agent had already committed in-memory.
+    * The fact / episode set is large enough that re-reading the whole
+      JSON file on open starts to sting.
+
+    Schema (auto-created on first open)::
+
+        facts(id PK, key, value, scope, source, updated_at,
+              valid_from, valid_to, invalidated_at, supersedes)
+        preferences(key PK, value, updated_at)
+        episodes(rowid PK, kind, payload_json, outcome, timestamp, agent)
+
+    Thread-safety: one connection per :class:`SQLiteMemoryStore`
+    instance, guarded by an internal :class:`threading.RLock`.
+    ``check_same_thread=False`` is passed on the connection so tool
+    threads and the main thread can share one store.
+    """
+
+    _flush_interval = 0.0  # SQLite writes are immediate; no debounce.
+    _max_episodes = 500  # trimmed on insert overflow, matches JSON store.
+
+    _SCHEMA = (
+        """
+        CREATE TABLE IF NOT EXISTS facts (
+            id             TEXT PRIMARY KEY,
+            key            TEXT NOT NULL,
+            value          TEXT NOT NULL,
+            scope          TEXT NOT NULL,
+            source         TEXT NOT NULL DEFAULT '',
+            updated_at     REAL NOT NULL,
+            valid_from     REAL NOT NULL,
+            valid_to       REAL,
+            invalidated_at REAL,
+            supersedes     TEXT
+        );
+        """,
+        "CREATE INDEX IF NOT EXISTS facts_scope_key ON facts(scope, key);",
+        "CREATE INDEX IF NOT EXISTS facts_active ON facts(scope, key) WHERE valid_to IS NULL;",
+        """
+        CREATE TABLE IF NOT EXISTS preferences (
+            key        TEXT PRIMARY KEY,
+            value      TEXT NOT NULL,
+            updated_at REAL NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS episodes (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind         TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            outcome      TEXT NOT NULL,
+            timestamp    REAL NOT NULL,
+            agent        TEXT NOT NULL DEFAULT ''
+        );
+        """,
+    )
+
+    def __init__(self, path: str | Path) -> None:
+        import sqlite3
+
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
+        self._conn = sqlite3.connect(
+            str(self.path),
+            check_same_thread=False,
+            isolation_level=None,  # autocommit; we manage transactions explicitly.
+        )
+        self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA journal_mode=WAL;")
+        self._conn.execute("PRAGMA synchronous=NORMAL;")
+        for stmt in self._SCHEMA:
+            self._conn.execute(stmt)
+
+    # ----- facts -----
+
+    def _row_to_fact(self, row: Any) -> Fact:
+        return Fact(
+            key=row["key"],
+            value=row["value"],
+            scope=row["scope"],
+            source=row["source"] or "",
+            updated_at=row["updated_at"],
+            id=row["id"],
+            valid_from=row["valid_from"],
+            valid_to=row["valid_to"],
+            invalidated_at=row["invalidated_at"],
+            supersedes=row["supersedes"],
+        )
+
+    def add_fact(
+        self,
+        key: str,
+        value: str,
+        *,
+        scope: str = "global",
+        source: str = "",
+    ) -> None:
+        """Append-only fact write; see :meth:`JSONMemoryStore.add_fact`."""
+        with self._lock:
+            now = time.time()
+            cur = self._conn.execute(
+                "SELECT id, value FROM facts WHERE scope=? AND key=? AND valid_to IS NULL LIMIT 1",
+                (scope, key),
+            )
+            prior = cur.fetchone()
+            if prior is not None and prior["value"] == value:
+                self._conn.execute("UPDATE facts SET updated_at=? WHERE id=?", (now, prior["id"]))
+                return
+            new_id = f"f_{uuid.uuid4().hex[:10]}"
+            self._conn.execute("BEGIN IMMEDIATE;")
+            try:
+                if prior is not None:
+                    self._conn.execute(
+                        "UPDATE facts SET valid_to=?, invalidated_at=? WHERE id=?",
+                        (now, now, prior["id"]),
+                    )
+                self._conn.execute(
+                    """
+                    INSERT INTO facts (id, key, value, scope, source, updated_at,
+                                       valid_from, valid_to, invalidated_at, supersedes)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)
+                    """,
+                    (
+                        new_id,
+                        key,
+                        value,
+                        scope,
+                        source,
+                        now,
+                        now,
+                        prior["id"] if prior is not None else None,
+                    ),
+                )
+                self._conn.execute("COMMIT;")
+            except Exception:
+                self._conn.execute("ROLLBACK;")
+                raise
+
+    def get_fact(self, key: str, *, scope: str = "global") -> str | None:
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT value FROM facts WHERE scope=? AND key=? AND valid_to IS NULL LIMIT 1",
+                (scope, key),
+            )
+            row = cur.fetchone()
+            return row["value"] if row is not None else None
+
+    def facts(self, *, scope: str | None = None) -> list[Fact]:
+        with self._lock:
+            if scope is None:
+                cur = self._conn.execute("SELECT * FROM facts WHERE valid_to IS NULL ORDER BY updated_at")
+            else:
+                cur = self._conn.execute(
+                    "SELECT * FROM facts WHERE valid_to IS NULL AND scope=? ORDER BY updated_at",
+                    (scope,),
+                )
+            return [self._row_to_fact(r) for r in cur.fetchall()]
+
+    def fact_history(self, key: str, *, scope: str = "global") -> list[Fact]:
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM facts WHERE scope=? AND key=? ORDER BY valid_from",
+                (scope, key),
+            )
+            return [self._row_to_fact(r) for r in cur.fetchall()]
+
+    def facts_as_of(self, t: float, *, scope: str | None = None) -> list[Fact]:
+        """Return what the agent believed to be true at world-time ``t``."""
+        with self._lock:
+            if scope is None:
+                cur = self._conn.execute(
+                    """
+                    SELECT * FROM facts
+                    WHERE valid_from <= ? AND (valid_to IS NULL OR valid_to > ?)
+                    ORDER BY valid_from
+                    """,
+                    (t, t),
+                )
+            else:
+                cur = self._conn.execute(
+                    """
+                    SELECT * FROM facts
+                    WHERE scope=? AND valid_from <= ? AND (valid_to IS NULL OR valid_to > ?)
+                    ORDER BY valid_from
+                    """,
+                    (scope, t, t),
+                )
+            # Dedup per (scope, key) keeping the last-inserted (matches
+            # JSON store's "later-appended wins on ties" rule).
+            picked: dict[tuple[str, str], Fact] = {}
+            for r in cur.fetchall():
+                picked[(r["scope"], r["key"])] = self._row_to_fact(r)
+            return list(picked.values())
+
+    def forget_fact(self, key: str, *, scope: str = "global") -> bool:
+        with self._lock:
+            now = time.time()
+            cur = self._conn.execute(
+                "SELECT id FROM facts WHERE scope=? AND key=? AND valid_to IS NULL LIMIT 1",
+                (scope, key),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return False
+            self._conn.execute(
+                "UPDATE facts SET valid_to=?, invalidated_at=? WHERE id=?",
+                (now, now, row["id"]),
+            )
+            return True
+
+    # ----- preferences -----
+
+    def set_preference(self, key: str, value: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO preferences (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+                """,
+                (key, value, time.time()),
+            )
+
+    def preferences(self) -> list[Preference]:
+        with self._lock:
+            cur = self._conn.execute("SELECT key, value, updated_at FROM preferences ORDER BY key")
+            return [Preference(key=r["key"], value=r["value"], updated_at=r["updated_at"]) for r in cur.fetchall()]
+
+    # ----- episodes -----
+
+    def add_episode(
+        self,
+        kind: str,
+        payload: dict[str, Any],
+        outcome: str,
+        *,
+        agent: str = "",
+    ) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO episodes (kind, payload_json, outcome, timestamp, agent) VALUES (?, ?, ?, ?, ?)",
+                (kind, json.dumps(payload, default=str), outcome, time.time(), agent),
+            )
+            # Trim to the last ``_max_episodes`` — same bounded-buffer
+            # behaviour as the JSON store, at the cost of one DELETE per
+            # overflow. The ``rowid > (max_rowid - N)`` form reads as a
+            # no-op when there are fewer than N rows.
+            self._conn.execute(
+                """
+                DELETE FROM episodes
+                WHERE id <= (SELECT MAX(id) FROM episodes) - ?
+                """,
+                (self._max_episodes,),
+            )
+
+    def recent_episodes(self, n: int = 5, *, kind: str | None = None) -> list[Episode]:
+        with self._lock:
+            if kind is None:
+                cur = self._conn.execute("SELECT * FROM episodes ORDER BY id DESC LIMIT ?", (n,))
+            else:
+                cur = self._conn.execute(
+                    "SELECT * FROM episodes WHERE kind=? ORDER BY id DESC LIMIT ?",
+                    (kind, n),
+                )
+            rows = cur.fetchall()
+            out: list[Episode] = []
+            for r in reversed(rows):  # oldest-first matches JSON store
+                try:
+                    payload = json.loads(r["payload_json"])
+                except json.JSONDecodeError:
+                    payload = {"_malformed_json": r["payload_json"]}
+                out.append(
+                    Episode(
+                        kind=r["kind"],
+                        payload=payload,
+                        outcome=r["outcome"],
+                        timestamp=r["timestamp"],
+                        agent=r["agent"] or "",
+                    )
+                )
+            return out
+
+    # ----- rendering / lifecycle -----
+
+    def flush(self) -> None:
+        """No-op — SQLite autocommit means writes are already durable."""
+        return
+
+    def close(self) -> None:
+        """Close the underlying connection. Idempotent."""
+        with self._lock:
+            if self._conn is not None:
+                try:
+                    self._conn.close()
+                finally:
+                    self._conn = None  # type: ignore[assignment]
+
+    def render_for_prompt(self, *, max_facts: int = 20, max_episodes: int = 5) -> str:
+        """Render memory as a concise markdown block for the system prompt.
+
+        Same layout as :meth:`JSONMemoryStore.render_for_prompt` so
+        swapping stores doesn't change what the LLM sees.
+        """
+        with self._lock:
+            lines: list[str] = []
+
+            prefs = self.preferences()
+            if prefs:
+                lines.append("## Known preferences")
+                for p in prefs[:max_facts]:
+                    lines.append(f"- {p.key}: {p.value}")
+
+            active_facts = self.facts()
+            if active_facts:
+                lines.append("## Known facts")
+                for rendered, f in enumerate(active_facts):
+                    if rendered >= max_facts:
+                        break
+                    scope_tag = "" if f.scope == "global" else f" [{f.scope}]"
+                    lines.append(f"- {f.key}{scope_tag}: {f.value}")
+
+            episodes = self.recent_episodes(n=max_episodes)
+            if episodes:
+                lines.append("## Recent outcomes")
+                for e in episodes:
+                    brief = ", ".join(f"{k}={v}" for k, v in list(e.payload.items())[:3])
+                    lines.append(f"- [{e.kind}] {brief} → {e.outcome}")
+
+            return "\n".join(lines).strip()
+
+
+# ---------------------------------------------------------------------------
 # SessionStore
 # ---------------------------------------------------------------------------
 

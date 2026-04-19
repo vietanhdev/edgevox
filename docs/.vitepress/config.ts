@@ -11,13 +11,13 @@ export default withMermaid(
     srcDir: ".",
     cleanUrls: true,
 
-    // ``plan.md`` and ``reports/`` are internal planning artefacts we
-    // don't want on the public site — excluded from the build.
-    srcExclude: ["reports/**", "plan.md"],
+    // ``reports/`` holds raw benchmark data (JSON) we don't want on the
+    // public site — excluded from the build. Refined report pages live
+    // under ``documentation/reports/``.
+    srcExclude: ["reports/**"],
 
-    // Only the excluded planning artefacts should be tolerated as
-    // dead-link targets; anything else going red must fail the build.
-    ignoreDeadLinks: [/^\/plan/, /^\/reports\//],
+    // The raw data directory is the only tolerated dead-link target.
+    ignoreDeadLinks: [/^\/reports\//],
 
     head: [
       ["link", { rel: "icon", type: "image/svg+xml", href: "/logo.svg" }],
@@ -79,6 +79,16 @@ export default withMermaid(
               { text: "Multi-agent", link: "/documentation/multiagent" },
               { text: "Interrupt & barge-in", link: "/documentation/interrupt" },
               { text: "Tool calling", link: "/documentation/tool-calling" },
+            ],
+          },
+          {
+            text: "Reports",
+            collapsed: false,
+            items: [
+              {
+                text: "SLM tool-calling benchmark",
+                link: "/documentation/reports/slm-tool-calling-benchmark",
+              },
             ],
           },
         ],

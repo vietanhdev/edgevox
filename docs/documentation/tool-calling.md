@@ -104,7 +104,7 @@ agent = LLMAgent(
 - `tests/test_llm_tool_parsers.py` — unit coverage per detector.
 - `tests/tool_parsing/test_qwen3_think_block.py` — raw-first parse order.
 - `tests/tool_parsing/test_mistral_ids.py` — 9-char id round-trip.
-- `tests/bfcl/` (planned PR-12) — BFCL v3 AST-eq regression harness.
+- `tests/bfcl/` — BFCL v3 AST-eq regression harness (`ast_eq.py` + `fixtures.json` + `test_parser_chain.py`).
 
 ## See also
 

@@ -1,6 +1,6 @@
 """Agent foundations: Session, AgentContext, AgentEvent, Handoff, LLMAgent.
 
-The design points inherited from the plan (``docs/plan.md``):
+Design points (see ``docs/documentation/agent-loop.md`` and ``docs/documentation/hooks.md``):
 
 - ``Agent`` is a minimal Protocol so workflows can polymorphically drive
   any mix of LLM-backed agents and composite workflows.

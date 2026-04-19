@@ -21,7 +21,7 @@ bb.set("last_sensor_reading", 37.5)
 bb.watch("task_queue", lambda k, old, new: print(f"queue → {new}"))
 ```
 
-Watchers fire synchronously after `set()` returns (after the lock is released). A slow watcher will block the writer — planned async-watcher fan-out (PR-14+) will change this.
+Watchers fire synchronously by default after `set()` returns (after the lock is released); a slow watcher blocks the writer. For non-blocking fan-out, construct the blackboard with `Blackboard(async_watchers=True)` — watchers run on a private thread pool and `set()` returns immediately. Call `bb.close()` on shutdown to release the pool.
 
 ## AgentMessage + bus helpers
 
@@ -101,7 +101,14 @@ The router emits a `handoff_to_<worker>` call; the target runs with a fresh `Ses
 
 ### Supervisor + volunteers (blackboard pattern)
 
-The supervisor posts a task on the blackboard; subordinate agents watch the key and self-select based on their capability. Planned `Blackboard.post_request(task, reply_to)` helper (PR-9) makes this ergonomic.
+The supervisor posts a task on the blackboard; subordinate agents watch the key and self-select based on their capability. Use `bb.post_request(request_key, task, timeout=…)` for the common request/reply shape — it returns a `concurrent.futures.Future` that resolves the moment a volunteer calls `bb.reply_to(request, result)`:
+
+```python
+fut = bb.post_request("plan.request", {"goal": "pick cup"}, timeout=5.0)
+plan = fut.result()  # blocks up to 5 s, raises TimeoutError on miss
+```
+
+A unique `reply_key` is allocated per call so concurrent requests on the same `request_key` never collide. The reply watcher is auto-unsubscribed on resolution or cancel.
 
 ### Event-driven background agent
 

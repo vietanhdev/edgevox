@@ -75,3 +75,7 @@ EdgeVox is not just a library — [**RookApp**](/documentation/desktop) is a ref
 - [Multi-agent](/documentation/multiagent) — `Blackboard`, `BackgroundAgent`, `AgentPool`
 - [Interrupt & barge-in](/documentation/interrupt) — cancel-token plumbing
 - [Tool calling](/documentation/tool-calling) — parser chain + GBNF grammar roadmap
+
+**Reports**
+
+- [SLM tool-calling benchmark](/documentation/reports/slm-tool-calling-benchmark) — 18 GGUF presets measured on RTX 3090, parser chain + SLM harness results
