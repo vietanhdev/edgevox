@@ -128,9 +128,9 @@ edgevox-agent = "edgevox.examples.agents.cli:main"
 edgevox-chess-robot = "edgevox.apps.chess_robot_qt.main:main"
 
 [project.urls]
-Homepage = "https://github.com/vietanhdev/edgevox"
+Homepage = "https://github.com/nrl-ai/edgevox"
 Documentation = "https://edgevox.nrl.ai"
-Issues = "https://github.com/vietanhdev/edgevox/issues"
+Issues = "https://github.com/nrl-ai/edgevox/issues"
 
 [tool.ruff]
 target-version = "py310"

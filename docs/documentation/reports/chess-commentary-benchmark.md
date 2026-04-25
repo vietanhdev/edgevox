@@ -4,7 +4,7 @@
 
 ## Executive summary
 
-- Benchmarked **25 generalist + tool-specialist LLMs** via [`scripts/bench_chess_commentary.py`](https://github.com/vietanhdev/edgevox/blob/main/scripts/bench_chess_commentary.py) across **35 curated chess scenarios** (opening / middlegame / endgame / terminal) with a **per-turn stockfish eval recomputation** so the directive the model sees matches what RookApp would see in a real game.
+- Benchmarked **25 generalist + tool-specialist LLMs** via [`scripts/bench_chess_commentary.py`](https://github.com/nrl-ai/edgevox/blob/main/scripts/bench_chess_commentary.py) across **35 curated chess scenarios** (opening / middlegame / endgame / terminal) with a **per-turn stockfish eval recomputation** so the directive the model sees matches what RookApp would see in a real game.
 - **Heuristic quality score is not sufficient** — several models hit 99–100 on the automated grader but fail semantic audit catastrophically (echo SAN, invert attribution on mate, call the opponent's blunder "a solid move"). Only a hand-audit of mate / capture / blunder turns revealed the real ranking.
 - **Default picked: `gemma-4-e2b` (Q4_K_M, ~1.8 GB).** Passes 7/8 high-stakes scenarios in the semantic audit, plays to the persona voice, keeps replies short and grounded. Sits at the *fastest acceptable* point on the quality/speed Pareto frontier.
 - **Canned game-end replies** (added as a direct outcome of this benchmark) eliminate the single biggest failure mode of 1B-class models — saying *"I'll keep playing"* after being mated — at zero LLM cost.
@@ -266,5 +266,5 @@ Defaults include the stockfish eval recomputation — the binary must be on `$PA
 
 - [`slm-tool-calling-benchmark.md`](/documentation/reports/slm-tool-calling-benchmark) — BFCL-style tool-call benchmark for the same preset pool.
 - [`desktop.md#commentary-quality--evaluation`](/documentation/desktop#commentary-quality--evaluation) — design of the commentary gate that produces the directive.
-- [`scripts/bench_chess_commentary.py`](https://github.com/vietanhdev/edgevox/blob/main/scripts/bench_chess_commentary.py) — runner.
-- [`scripts/eval_llm_commentary.py`](https://github.com/vietanhdev/edgevox/blob/main/scripts/eval_llm_commentary.py) — single-model harness and scenario definitions.
+- [`scripts/bench_chess_commentary.py`](https://github.com/nrl-ai/edgevox/blob/main/scripts/bench_chess_commentary.py) — runner.
+- [`scripts/eval_llm_commentary.py`](https://github.com/nrl-ai/edgevox/blob/main/scripts/eval_llm_commentary.py) — single-model harness and scenario definitions.

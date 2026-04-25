@@ -5,33 +5,33 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/edgevox.svg?color=4c1)](https://pypi.org/project/edgevox/)
 [![Python versions](https://img.shields.io/pypi/pyversions/edgevox.svg)](https://pypi.org/project/edgevox/)
-[![License: MIT](https://img.shields.io/pypi/l/edgevox.svg?color=green)](https://github.com/vietanhdev/edgevox/blob/main/LICENSE)
+[![License: MIT](https://img.shields.io/pypi/l/edgevox.svg?color=green)](https://github.com/nrl-ai/edgevox/blob/main/LICENSE)
 [![Downloads](https://img.shields.io/pypi/dm/edgevox.svg?label=PyPI%20downloads&color=blue)](https://pypistats.org/packages/edgevox)
-[![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)](https://github.com/vietanhdev/edgevox/releases/latest)
+[![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)](https://github.com/nrl-ai/edgevox/releases/latest)
 
-[![CI](https://github.com/vietanhdev/edgevox/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/vietanhdev/edgevox/actions/workflows/ci.yml)
-[![RookApp Desktop](https://github.com/vietanhdev/edgevox/actions/workflows/rookapp-desktop.yml/badge.svg?branch=main)](https://github.com/vietanhdev/edgevox/actions/workflows/rookapp-desktop.yml)
+[![CI](https://github.com/nrl-ai/edgevox/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/nrl-ai/edgevox/actions/workflows/ci.yml)
+[![RookApp Desktop](https://github.com/nrl-ai/edgevox/actions/workflows/rookapp-desktop.yml/badge.svg?branch=main)](https://github.com/nrl-ai/edgevox/actions/workflows/rookapp-desktop.yml)
 [![Docs](https://img.shields.io/badge/docs-edgevox.nrl.ai-blue)](https://edgevox.nrl.ai)
-[![GitHub stars](https://img.shields.io/github/stars/vietanhdev/edgevox?style=social)](https://github.com/vietanhdev/edgevox/stargazers)
+[![GitHub stars](https://img.shields.io/github/stars/nrl-ai/edgevox?style=social)](https://github.com/nrl-ai/edgevox/stargazers)
 
 <table>
   <tr>
     <td align="center" width="50%">
-      <a href="https://raw.githubusercontent.com/vietanhdev/edgevox/main/docs/public/screenshot.png"><img src="https://raw.githubusercontent.com/vietanhdev/edgevox/main/docs/public/screenshot.png" alt="EdgeVox TUI — streaming voice pipeline"/></a>
+      <a href="https://raw.githubusercontent.com/nrl-ai/edgevox/main/docs/public/screenshot.png"><img src="https://raw.githubusercontent.com/nrl-ai/edgevox/main/docs/public/screenshot.png" alt="EdgeVox TUI — streaming voice pipeline"/></a>
       <br/><sub><b>Voice pipeline TUI</b> — streaming STT · LLM · TTS with VAD barge-in</sub>
     </td>
     <td align="center" width="50%">
-      <a href="https://raw.githubusercontent.com/vietanhdev/edgevox/main/docs/public/robot_panda.png"><img src="https://raw.githubusercontent.com/vietanhdev/edgevox/main/docs/public/robot_panda.png" alt="MuJoCo Franka Panda pick-and-place"/></a>
+      <a href="https://raw.githubusercontent.com/nrl-ai/edgevox/main/docs/public/robot_panda.png"><img src="https://raw.githubusercontent.com/nrl-ai/edgevox/main/docs/public/robot_panda.png" alt="MuJoCo Franka Panda pick-and-place"/></a>
       <br/><sub><b>MuJoCo · Franka arm</b> — voice-controlled pick-and-place</sub>
     </td>
   </tr>
   <tr>
     <td align="center" width="50%">
-      <a href="https://raw.githubusercontent.com/vietanhdev/edgevox/main/docs/public/robot_unitree_g1.png"><img src="https://raw.githubusercontent.com/vietanhdev/edgevox/main/docs/public/robot_unitree_g1.png" alt="Unitree G1 humanoid"/></a>
+      <a href="https://raw.githubusercontent.com/nrl-ai/edgevox/main/docs/public/robot_unitree_g1.png"><img src="https://raw.githubusercontent.com/nrl-ai/edgevox/main/docs/public/robot_unitree_g1.png" alt="Unitree G1 humanoid"/></a>
       <br/><sub><b>Unitree G1 humanoid</b> — procedural gait + ONNX policy slot</sub>
     </td>
     <td align="center" width="50%">
-      <a href="https://raw.githubusercontent.com/vietanhdev/edgevox/main/docs/public/rook_app.png"><img src="https://raw.githubusercontent.com/vietanhdev/edgevox/main/docs/public/rook_app.png" alt="RookApp — PySide6 desktop chess robot"/></a>
+      <a href="https://raw.githubusercontent.com/nrl-ai/edgevox/main/docs/public/rook_app.png"><img src="https://raw.githubusercontent.com/nrl-ai/edgevox/main/docs/public/rook_app.png" alt="RookApp — PySide6 desktop chess robot"/></a>
       <br/><sub><b>RookApp desktop</b> — offline chess partner (Qt + LLMAgent + Stockfish, one Python process)</sub>
     </td>
   </tr>
@@ -206,7 +206,7 @@ Each one supports `--text-mode`, `--simple-ui`, or (default) full TUI. Any of th
 
 ## RookApp — desktop chess robot
 
-![RookApp screenshot](https://raw.githubusercontent.com/vietanhdev/edgevox/main/docs/public/rook_app.png)
+![RookApp screenshot](https://raw.githubusercontent.com/nrl-ai/edgevox/main/docs/public/rook_app.png)
 
 Voice-controlled offline chess partner built on EdgeVox — a PySide6 desktop app that runs the Qt UI, the `LLMAgent`, llama-cpp (Llama-3.2-1B Q4_K_M), and Stockfish all in one Python process. No browser, no web server, no Node toolchain. Three personas (`casual`, `grandmaster`, `trash_talker`), six board themes, three piece sets, Kokoro TTS, Whisper STT with barge-in.
 

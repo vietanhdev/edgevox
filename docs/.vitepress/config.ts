@@ -42,7 +42,7 @@ export default withMermaid(
         {
           text: "Links",
           items: [
-            { text: "GitHub", link: "https://github.com/vietanhdev/edgevox" },
+            { text: "GitHub", link: "https://github.com/nrl-ai/edgevox" },
             { text: "PyPI", link: "https://pypi.org/project/edgevox" },
           ],
         },
@@ -116,7 +116,7 @@ export default withMermaid(
       },
 
       socialLinks: [
-        { icon: "github", link: "https://github.com/vietanhdev/edgevox" },
+        { icon: "github", link: "https://github.com/nrl-ai/edgevox" },
       ],
 
       footer: {
@@ -125,7 +125,7 @@ export default withMermaid(
       },
 
       editLink: {
-        pattern: "https://github.com/vietanhdev/edgevox/edit/main/docs/:path",
+        pattern: "https://github.com/nrl-ai/edgevox/edit/main/docs/:path",
         text: "Edit this page on GitHub",
       },
     },

@@ -11,7 +11,7 @@ hero:
       link: /documentation/
     - theme: alt
       text: View on GitHub
-      link: https://github.com/vietanhdev/edgevox
+      link: https://github.com/nrl-ai/edgevox
 
   image:
     src: /screenshot.png
