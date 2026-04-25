@@ -4,7 +4,7 @@ layout: home
 hero:
   name: EdgeVox
   text: Voice agents for robots.
-  tagline: Offline agents, skills, and workflows — sub-second voice pipeline, fully on-device.
+  tagline: Sub-second voice pipeline. Plug-and-play harness. Fully on-device.
   actions:
     - theme: brand
       text: Get Started
@@ -16,39 +16,93 @@ hero:
   image:
     src: /screenshot.png
     alt: EdgeVox TUI Screenshot
-
-features:
-  - title: Agent framework
-    icon: 🧠
-    details: "@tool and @skill decorators, LLMAgent with handoffs, nine composable workflows (Sequence, Fallback, Loop, Parallel, Router, Supervisor, Orchestrator, Retry, Timeout), cancellable skills with GoalHandle."
-  - title: Full sim stack
-    icon: 🤖
-    details: "ToyWorld · IR-SIM (2D) · MuJoCo Franka (arm) · Unitree G1 / H1 (humanoid) · External ROS2 (Gazebo, Isaac, real robots). One SimEnvironment protocol across all tiers."
-  - title: Sub-second voice
-    icon: ⚡
-    details: Streaming STT → LLM → TTS pipeline delivers first audio in ~0.8 s. 16 languages, 56 voices, 4 TTS backends (Kokoro · Piper · Supertonic · PyThaiTTS).
-  - title: 100 % offline
-    icon: 🔒
-    details: No cloud APIs, no telemetry. Whisper STT + Gemma 4 LLM + Kokoro / Piper / Supertonic / PyThaiTTS all run on your hardware (CPU / CUDA / Metal).
-  - title: Safety-first robotics
-    icon: 🛡️
-    details: SafetyMonitor preempts before the LLM is consulted. Stop-words halt in-flight skills in ~200 ms. The LLM never enters the reactive layer.
-  - title: ROS2-native
-    icon: 📡
-    details: "Full ROS2 surface — voice + robot_state + agent_event topics, TF2 / Nav2 cmd_vel / LaserScan / Image, execute_skill ActionServer, std_srvs query services."
-  - title: Ships as a desktop app
-    icon: 💻
-    details: "RookApp is a reference PySide6 build — Qt UI, LLMAgent, llama-cpp, and Stockfish all in one Python process. No browser, no web server, no Node, no Tauri."
-    link: /documentation/desktop
-    linkText: RookApp guide →
-  - title: Pluggable harness
-    icon: 🧩
-    details: "Swap any STT / TTS / LLM / VAD / hook / skill / tool / parser via Protocols + registries. Six hook fire-points, priority ordering, typed AgentContext."
-    link: /documentation/agent-loop
-    linkText: Agent loop →
 ---
 
-## Demos
+<!-- ===== Marquee value-prop strip ===== -->
+<div class="ev-marquee" aria-hidden="true">
+  <div class="ev-marquee-track">
+    <span>offline by default</span>
+    <span>runs on a laptop</span>
+    <span>no cloud required</span>
+    <span>your data stays put</span>
+    <span>plug-and-play hooks</span>
+    <span>16 languages</span>
+    <span>sub-second pipeline</span>
+    <span>open since 2024</span>
+    <span>offline by default</span>
+    <span>runs on a laptop</span>
+    <span>no cloud required</span>
+    <span>your data stays put</span>
+    <span>plug-and-play hooks</span>
+    <span>16 languages</span>
+    <span>sub-second pipeline</span>
+    <span>open since 2024</span>
+  </div>
+</div>
+
+<!-- ===== § 01 — Four corners ===== -->
+<header class="ev-corners-header">
+  <div>
+    <div class="marker">§ 01 — Four corners</div>
+    <h2>What EdgeVox actually is.</h2>
+  </div>
+  <p class="lede">A small framework with a wide surface — the harness, the voice pipeline, the robot bridge, and a reference desktop app.</p>
+</header>
+
+<div class="ev-corners">
+  <div class="ev-corner">
+    <div class="ev-corner-head">
+      <span class="marker">§ 01</span>
+      <!-- Lucide: bot -->
+      <svg class="ev-icon ev-icon-lg" viewBox="0 0 24 24"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
+    </div>
+    <h3>Agents &amp; tools.</h3>
+    <p><code>@tool</code> and <code>@skill</code> decorators, <code>LLMAgent</code> with handoffs, nine composable workflows (Sequence, Fallback, Loop, Parallel, Router, Supervisor, Orchestrator, Retry, Timeout), cancellable skills with <code>GoalHandle</code>.</p>
+    <a class="ev-corner-link" href="/documentation/agent-loop">agent loop</a>
+  </div>
+
+  <div class="ev-corner featured">
+    <div class="ev-corner-head">
+      <span class="marker">§ 02</span>
+      <!-- Lucide: audio-waveform -->
+      <svg class="ev-icon ev-icon-lg" viewBox="0 0 24 24"><path d="M2 13a2 2 0 0 0 2-2V7a2 2 0 0 1 4 0v13a2 2 0 0 0 4 0V4a2 2 0 0 1 4 0v13a2 2 0 0 0 4 0v-4a2 2 0 0 1 2-2"/></svg>
+    </div>
+    <h3>Voice pipeline.</h3>
+    <p>Streaming STT → LLM → TTS in ~0.8 s on RTX 3080. 16 languages, 56 voices, four TTS backends (Kokoro · Piper · Supertonic · PyThaiTTS). VAD barge-in halts mid-phrase.</p>
+    <a class="ev-corner-link" href="/documentation/pipeline">voice pipeline</a>
+  </div>
+
+  <div class="ev-corner">
+    <div class="ev-corner-head">
+      <span class="marker">§ 03</span>
+      <!-- Lucide: cpu -->
+      <svg class="ev-icon ev-icon-lg" viewBox="0 0 24 24"><rect width="16" height="16" x="4" y="4" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/></svg>
+    </div>
+    <h3>Robotics &amp; sim.</h3>
+    <p>ROS2-native — voice + <code>robot_state</code> + <code>agent_event</code>, TF2, Nav2 <code>cmd_vel</code>, <code>execute_skill</code> action server. ToyWorld · IR-SIM · MuJoCo Franka · Unitree G1/H1 · external Gazebo/Isaac.</p>
+    <a class="ev-corner-link" href="/documentation/robotics">robotics &amp; sim</a>
+  </div>
+
+  <div class="ev-corner">
+    <div class="ev-corner-head">
+      <span class="marker">§ 04</span>
+      <!-- Lucide: monitor -->
+      <svg class="ev-icon ev-icon-lg" viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
+    </div>
+    <h3>Ships as an app.</h3>
+    <p>RookApp is the reference PySide6 build — Qt UI + LLMAgent + llama.cpp + Stockfish in one Python process. No browser, no web server, no Tauri. The framework runs end-user products, not just demos.</p>
+    <a class="ev-corner-link" href="/documentation/desktop">rookapp guide</a>
+  </div>
+</div>
+
+<!-- ===== § 02 — Demos ===== -->
+<header class="ev-section">
+  <div>
+    <div class="marker">§ 02 — Demos</div>
+    <h2>Things you can run today.</h2>
+  </div>
+  <p class="lede">One <code>pip install</code>, one process, one warm laptop. Each shot below is a real screen from this repo.</p>
+</header>
 
 <div class="ev-demos">
   <figure>
@@ -69,7 +123,14 @@ features:
   </figure>
 </div>
 
-## Try it
+<!-- ===== § 03 — Try it ===== -->
+<header class="ev-section">
+  <div>
+    <div class="marker">§ 03 — Try it</div>
+    <h2>Six entrypoints, one install.</h2>
+  </div>
+  <p class="lede">Every <code>edgevox-agent</code> invocation composes with <code>--ros2</code> for the full topic surface.</p>
+</header>
 
 ```bash
 edgevox                                       # voice pipeline TUI
@@ -81,3 +142,45 @@ edgevox-chess-robot                           # RookApp — PySide6 desktop ches
 ```
 
 Any `edgevox-agent` invocation composes with `--ros2` to publish `/edgevox/robot_state` + `/agent_event`, accept `cmd_vel` / `goal_pose` + `text_input`, and expose the `execute_skill` action.
+
+<!-- ===== § 04 — Principles ===== -->
+<header class="ev-section">
+  <div>
+    <div class="marker">§ 04 — Principles</div>
+    <h2>What we will and won't do.</h2>
+  </div>
+  <p class="lede">A small set of rules the codebase actually enforces — not aspirations.</p>
+</header>
+
+<div class="ev-principles">
+  <div class="ev-principle">
+    <div class="num">01</div>
+    <div class="title">Plug-and-play, not patchable.</div>
+    <div class="body">Every layer — STT, TTS, LLM, VAD, hooks, skills, tools, parsers — swaps via Protocols and registries. New behaviour lands as a plugin, never a conditional in core.</div>
+  </div>
+  <div class="ev-principle">
+    <div class="num">02</div>
+    <div class="title">Offline by default.</div>
+    <div class="body">No cloud APIs, no telemetry, no analytics. Whisper, Gemma, Kokoro, Piper, Supertonic, PyThaiTTS — every model runs on your hardware. Period.</div>
+  </div>
+  <div class="ev-principle">
+    <div class="num">03</div>
+    <div class="title">Streaming is the contract.</div>
+    <div class="body">STT &lt; 0.5 s, LLM first token &lt; 0.4 s, TTS first chunk &lt; 0.1 s. No blocking calls hold the loop. Latency regressions block the merge.</div>
+  </div>
+  <div class="ev-principle">
+    <div class="num">04</div>
+    <div class="title">Hardware-aware, never hardware-bound.</div>
+    <div class="body">CUDA, Metal, CPU — every backend degrades gracefully. A missing accelerator is a config decision, not a crash.</div>
+  </div>
+  <div class="ev-principle">
+    <div class="num">05</div>
+    <div class="title">Safety preempts the LLM.</div>
+    <div class="body">SafetyMonitor halts skills in ~200 ms before the LLM is consulted. The reactive layer is deterministic; the LLM never enters it.</div>
+  </div>
+  <div class="ev-principle">
+    <div class="num">06</div>
+    <div class="title">MIT, no copyleft contamination.</div>
+    <div class="body">License of every dependency is verified at add-time. GPL/AGPL/SSPL are refused. Your downstream stays unencumbered.</div>
+  </div>
+</div>

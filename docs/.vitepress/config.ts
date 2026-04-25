@@ -29,6 +29,8 @@ export default withMermaid(
       ],
     ],
 
+    appearance: false,
+
     themeConfig: {
       logo: "/logo.svg",
       siteTitle: "EdgeVox",
