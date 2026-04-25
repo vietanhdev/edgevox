@@ -1,6 +1,6 @@
 """EdgeVox — Offline voice agent framework for robots."""
 
-__version__ = "1.1.2"
+__version__ = "1.3.1"
 
 
 def __getattr__(name: str):
