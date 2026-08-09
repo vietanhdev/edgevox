@@ -220,6 +220,60 @@ body {
   background: var(--ev-warm-100);
 }
 
+/* Nav controls sit on one optical line as centred pills. VitePress stretches
+   .VPNavBarMenuLink to the full 64px bar height, so any background painted on
+   it reads as a tall slab rather than a control — height + align-self is what
+   turns it back into a button. */
+.VPNavBar .VPNavBarMenuLink,
+.VPNavBar .VPNavBarMenuGroup .button,
+.VPNavBar .VPFlyout .button {
+  height: 36px !important;
+  line-height: 36px !important;
+  align-self: center;
+  padding: 0 14px !important;
+  border-radius: var(--ev-radius-pill) !important;
+  background: transparent !important;
+}
+
+.VPNavBar .VPNavBarMenuLink:hover,
+.VPNavBar .VPNavBarMenuGroup:hover .button,
+.VPNavBar .VPFlyout:hover .button {
+  background: rgba(255, 255, 255, 0.15) !important;
+}
+
+/* Active page is marked by weight + a slightly firmer pill, not by a colour
+   shift — every item is already white on orange. */
+.VPNavBar .VPNavBarMenuLink.active {
+  background: rgba(255, 255, 255, 0.22) !important;
+  font-weight: 600 !important;
+}
+
+.VPNavBar .VPSocialLink {
+  width: 36px;
+  height: 36px;
+  align-self: center;
+  border-radius: var(--ev-radius-pill) !important;
+}
+
+.VPNavBar .VPSocialLink:hover {
+  background: rgba(255, 255, 255, 0.15) !important;
+}
+
+/* Separator before the social links, toned to the orange field */
+.VPNavBar .VPNavBarSocialLinks,
+.VPNavBar .VPNavBarAppearance,
+.VPNavBar .VPNavBarExtra,
+.VPNavBar .VPNavBarTranslations {
+  border-left-color: rgba(255, 255, 255, 0.24) !important;
+}
+
+/* Search sits on the same 36px line as the nav pills */
+.VPNavBarSearch .DocSearch-Button {
+  height: 36px !important;
+  border-radius: var(--ev-radius-pill) !important;
+  margin: 0 !important;
+}
+
 .VPNavBarHamburger .top,
 .VPNavBarHamburger .middle,
 .VPNavBarHamburger .bottom {

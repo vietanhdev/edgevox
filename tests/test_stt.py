@@ -54,9 +54,8 @@ class TestCreateSTTFactory:
         assert type(stt).__name__ == "WhisperSTT"
 
     @patch("edgevox.stt.sherpa_stt.hf_hub_download", return_value="/tmp/fake_model")
-    @patch("edgevox.stt.sherpa_stt.snapshot_download", return_value="/tmp/fake_dir")
     @patch("edgevox.core.gpu.has_cuda", return_value=False)
-    def test_vi_uses_sherpa(self, _cuda, _snap, _hf, _mock_sherpa_module):
+    def test_vi_uses_sherpa(self, _cuda, _hf, _mock_sherpa_module):
         import sys
 
         sys.modules.pop("edgevox.stt.sherpa_stt", None)

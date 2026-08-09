@@ -66,7 +66,7 @@ Full 25-model run on RTX 3090 (warmed, Q4_K_M GGUFs; per-reply times proportiona
 | Rank | Model | Heuristic | Per-reply (3090) | Size | Licence | Semantic verdict |
 |---|---|---|---|---|---|---|
 | 1 | `qwen2.5-1.5b` | 100.0 | 0.06 s | 1.0 GB | Apache-2.0 | ❌ 4/8 wrong attributions |
-| 1 | `hammer-2.1-0.5b` | 100.0 | 0.03 s | 0.5 GB | Qwen research | ❌ echoes code blocks |
+| 1 | `hammer-2.1-0.5b` | 100.0 | 0.03 s | 0.5 GB | cc-by-nc-4.0 | ❌ echoes code blocks |
 | 1 | `functionary-v3.2` | 100.0 | 0.14 s | 4.9 GB | MIT | ✓ but heavy |
 | 2 | `llama-3.2-1b` | 99.7 | 0.04 s | 0.8 GB | Llama-3 | ❌ 5/8 wrong (game-over + direction) |
 | 2 | `llama-3.2-3b` | 99.7 | 0.07 s | 2.0 GB | Llama-3 | ❌ 5/8 wrong on game-over |

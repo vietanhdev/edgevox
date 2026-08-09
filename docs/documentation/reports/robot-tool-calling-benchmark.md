@@ -17,7 +17,7 @@ Headline findings:
 - **Prompt engineering closes ≥ 20 points of gap** for weak-but-improvable models. Rewriting the persona with 3-5 concrete "utterance → call" examples lifted `phi-4-mini` on scout from **36.5 → 69.0** (+32.5) and `granite-4.0-1b` on panda from **48.0 → 74.5** (+26.5) without changing any tools or scoring.
 - **Per-agent, the hardest surface is `panda`** — the multi-argument `move_to_point(x, y, z)` call penalises small models that truncate numeric inputs or echo JSON schema metadata as arguments. The easiest surface is `scout`'s ToyWorld; the tightest failure mode in the benchmark is the "gripper position" vs "gripper state" lexical ambiguity, which sits on the tool-naming layer rather than the model layer.
 
-If you ship one model today on a 16 GB-class GPU, pick **`qwen2.5-3b`**. If latency is the ceiling (laptop co-running STT + TTS, or a CPU-only deployment), pick **`hammer-2.1-0.5b`** — the smallest model that made the cut.
+If you ship one model today on a 16 GB-class GPU, pick **`qwen2.5-3b`**. If latency is the ceiling (laptop co-running STT + TTS, or a CPU-only deployment), **`hammer-2.1-0.5b`** is the smallest model that made the cut — but note it is licensed **cc-by-nc-4.0 (non-commercial)**, so it cannot ship in a commercial product; `granite-4.0-1b` (Apache-2.0) is the permissive fallback at that size.
 
 ## 1 · Background
 
@@ -177,7 +177,7 @@ Both changes land with the benchmark so re-running this report against a differe
 |---|---|---|---|---|---|
 | `qwen2.5-3b` | **96.6** | 100 % | 2.12 s | 3.2 s | ship |
 | `gemma-4-e2b` | **96.0** | 100 % | 3.26 s | 3.6 s | ship |
-| `hammer-2.1-0.5b` | **91.2** | 95 % | **0.85 s** | 2.8 s | ship (speed champ) |
+| `hammer-2.1-0.5b` | **91.2** | 95 % | **0.85 s** | 2.8 s | speed champ — **non-commercial licence** |
 | `llama-3.2-3b` | **90.5** | 100 % | 6.69 s | 3.7 s | accuracy fine, too slow for live voice |
 | `qwen2.5-1.5b` | **83.6** | 86 % | 1.05 s | 3.0 s | usable w/ tuned persona |
 | `qwen3-1.7b` | **81.6** | 86 % | 4.66 s | 3.1 s | usable w/ tuned persona |

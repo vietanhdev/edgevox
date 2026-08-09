@@ -27,13 +27,17 @@ dependencies = [
     "soundfile>=0.13.1",
     "faster-whisper>=1.2",
     "sherpa-onnx>=1.12",
-    "llama-cpp-python>=0.3.8",
+    # >=0.3.25 is the floor for Gemma 4 architecture support (the default
+    # preset). Note PyPI ships CPU-only wheels; for GPU offload install from
+    # the CUDA index, e.g.
+    #   uv pip install llama-cpp-python --extra-index-url \
+    #     https://abetlen.github.io/llama-cpp-python/whl/cu124
+    "llama-cpp-python>=0.3.25",
     "kokoro-onnx>=0.5",
     "onnxruntime>=1.21,<1.24",
     "huggingface-hub>=0.24",
     "textual>=0.80",
     "rich>=13.0",
-    "piper-tts>=1.2",
     "supertonic-numpy2>=1.1.2",
     "pythaitts>=0.4",
     "pymicro-wakeword>=2.2",
@@ -49,6 +53,22 @@ dependencies = [
 [project.optional-dependencies]
 gpu = [
     "onnxruntime-gpu>=1.21",
+]
+# Piper TTS — OPT-IN because it is GPL-3.0-or-later, which an MIT project must
+# not pull into a default install.
+#
+# ``piper-tts`` was MIT through 1.2.0 and relicensed to GPL-3.0-or-later at
+# 1.3.0 (2025-07-10) under the same PyPI name: v1.3.0 embedded espeak-ng
+# directly and changed the licence in the same release. EdgeVox pinned
+# ``piper-tts>=1.2`` from before that change, so the range silently resolved to
+# a GPL build (verified 2026-08-09: installed 1.4.2 reports
+# ``License: GPL-3.0-or-later``). A version-range pin does not pin a licence.
+#
+# Installing this extra is a deliberate choice to add GPL-3 code to your
+# environment. Without it, Piper languages raise a clear error and the
+# Apache-2.0 Kokoro / Supertonic backends still work.
+piper = [
+    "piper-tts>=1.3",  # GPL-3.0-or-later — opt-in only, statically links espeak-ng
 ]
 dtln = [
     "ai-edge-litert>=2.0",  # TFLite runtime for DTLN-aec neural echo cancellation

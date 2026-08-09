@@ -122,7 +122,7 @@ EdgeVox's preset registry (`edgevox.llm.models.PRESETS`) currently holds 18 entr
 |---|---|---|---|---|
 | `granite-4.0-350m` | 350 M | **Apache-2.0** | listed in BFCL | Ultra-tiny IBM Nano Mamba-2 hybrid |
 | `granite-4.0-1b` | 1 B | **Apache-2.0** | **50.2** (card) / 54.8 (blog) | Best-in-class permissive ≤ 2 B |
-| `hammer-2.1-0.5b` | 0.5 B | Qwen-research | best ≤ 1 B (paper) | Shipping inside Google AI Edge |
+| `hammer-2.1-0.5b` | 0.5 B | **cc-by-nc-4.0 (non-commercial)** | best ≤ 1 B (paper) | Shipping inside Google AI Edge |
 | `xlam-2-1b-fc` | 1 B | CC-BY-NC-4.0 | top ≤ 2 B | Non-commercial |
 | `xlam-2-3b-fc` | 3 B | CC-BY-NC-4.0 | top 3 B | Non-commercial |
 | `xlam-2-8b-fc` | 8 B | CC-BY-NC-4.0 | BFCL v3 top-5 | Non-commercial |
@@ -218,7 +218,7 @@ All 18 rows in [§6.1](#_6-1-final-results-18-presets-rtx-3090-cached-loads) are
 
 | Family | Pinned filename | Size on disk |
 |---|---|---|
-| Gemma 4 E2B (default) | `gemma-4-E2B-it-Q4_K_M.gguf` | 1.8 GB |
+| Gemma 4 E2B (default) | `gemma-4-E2B-it-Q4_K_M.gguf` | 3.11 GB |
 | Qwen 2.5 1.5B / 3B | `Qwen2.5-{1.5B,3B}-Instruct-Q4_K_M.gguf` | 1.0 / 2.0 GB |
 | Qwen 3 1.7B | `Qwen3-1.7B-Q4_K_M.gguf` | 1.1 GB |
 | Llama 3.2 1B / 3B | `Llama-3.2-{1B,3B}-Instruct-Q4_K_M.gguf` | 0.8 / 2.0 GB |
@@ -239,7 +239,7 @@ All 18 rows in [§6.1](#_6-1-final-results-18-presets-rtx-3090-cached-loads) are
 | `Q2_K` | 3.4 | ~1.2 GB | Last-resort ≤ 1.5 GB slot |
 | `Q3_K_S` / `Q3_K_M` | 3.9 / 4.5 | ~1.4 / 1.5 GB | First quant where short-turn chat tone usually survives |
 | `IQ4_XS` | 4.25 | ~1.6 GB | Often matches Q4_K_M quality at ~10 % smaller |
-| **`Q4_K_M`** | **4.85** | **~1.8 GB** | **EdgeVox default — quality knee** |
+| **`Q4_K_M`** | **4.85** | **~3.11 GB** | **EdgeVox default — quality knee** |
 | `Q5_K_M` | 5.7 | ~2.2 GB | Diminishing returns vs. Q4_K_M on models this small |
 | `Q6_K` | 6.6 | ~2.5 GB | Practically lossless vs. FP16 |
 | `Q8_0` | 8.5 | ~3.2 GB | Reference-grade; no reason to ship over Q6_K |

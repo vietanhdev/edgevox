@@ -30,14 +30,18 @@ Future recipes (not yet shipped):
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import logging
+from typing import TYPE_CHECKING, Any
 
 from edgevox.agents.base import LLMAgent
+from edgevox.agents.hooks import AFTER_TOOL, HookResult
 from edgevox.agents.workflow import Sequence
 
 if TYPE_CHECKING:
     from edgevox.agents.skills import Skill
     from edgevox.llm.tools import Tool
+
+log = logging.getLogger(__name__)
 
 # Default instruction blocks tuned for the recipe. Override per-call
 # only when the canonical wording doesn't fit the task.
@@ -1037,6 +1041,64 @@ ANTI-PATTERNS:
 _TERMINATION_MARKER = "TASK COMPLETE"
 
 
+class _PeriodicVerifierHook:
+    """Consult a verifier every N tool actions and end the turn when done.
+
+    Weak models often keep acting after the goal is already satisfied,
+    burning hops until ``max_iterations``. This hook fires inside the inner
+    agent's ``after_tool`` point, counts actions, and every ``every_n`` of
+    them asks ``verifier(ctx)`` whether the task is finished. When it says
+    yes, the turn ends with a reply carrying the ``TASK COMPLETE`` marker, so
+    :class:`_ReActRunner`'s recheck loop accepts termination without another
+    LLM round-trip.
+
+    State lives in ``ctx.hook_state[id(self)]`` so two instances on the same
+    context keep independent counters, per the harness rule.
+
+    Args:
+        every_n: consult the verifier on every Nth action. ``0`` (or any
+            non-positive value) makes the hook inert — a caller passing 0
+            should get "never", not a div-by-zero or surprise activation.
+        verifier: callable ``(ctx) -> bool``. Exceptions are swallowed and
+            treated as "not done yet"; a broken predicate must never take
+            down the agent loop.
+    """
+
+    points = frozenset({AFTER_TOOL})
+    priority = 40
+
+    def __init__(self, *, every_n: int, verifier: object) -> None:
+        self.every_n = int(every_n)
+        self.verifier = verifier
+
+    def __call__(self, point: str, ctx: Any, payload: Any = None) -> HookResult | None:
+        # Defensive: the registry already filters by point, but the hook is
+        # also called directly in tests and by hand-rolled chains.
+        if point != AFTER_TOOL or self.every_n <= 0:
+            return None
+
+        state = ctx.hook_state.setdefault(id(self), {"count": 0})
+        state["count"] += 1
+        count = state["count"]
+
+        if count % self.every_n != 0:
+            return None
+
+        try:
+            done = bool(self.verifier(ctx))
+        except Exception:
+            log.debug("periodic verifier raised; treating as not-done", exc_info=True)
+            return None
+
+        if not done:
+            return None
+
+        return HookResult.end(
+            f"{_TERMINATION_MARKER}: verifier confirmed the goal after {count} actions.",
+            reason=f"periodic verifier confirmed completion after {count} actions",
+        )
+
+
 class ReActAgent:
     """Reason -> Act -> Observe iterative loop agent.
 
@@ -1102,6 +1164,8 @@ class ReActAgent:
         max_completion_recheck_attempts: int = 3,
         instructions: str | None = None,
         completion_check: object | None = None,
+        verifier: object | None = None,
+        verify_every_n_actions: int = 0,
         completion_followup: str | None = None,
         auto_continue_on_promise: bool = True,
         name: str = "react",
@@ -1125,18 +1189,33 @@ class ReActAgent:
                 set and the model stops emitting tool calls, this is
                 consulted before accepting the termination. False ->
                 agent gets a "not done yet" re-prompt.
+            verifier: modern spelling of ``completion_check``. When both
+                are given, ``verifier`` wins.
+            verify_every_n_actions: when > 0 *and* a verifier is set,
+                install :class:`_PeriodicVerifierHook` so the predicate is
+                also consulted mid-run every N tool actions, ending the turn
+                as soon as the goal is met instead of burning hops. 0
+                disables it (end-of-turn checking only).
             name: workflow display name.
         """
+        predicate = verifier if verifier is not None else completion_check
+
+        # Mid-run verification needs both halves: a predicate to ask and a
+        # cadence to ask on. Either alone is a no-op.
+        hooks = list(hooks) if hooks else []
+        if predicate is not None and verify_every_n_actions > 0:
+            hooks.append(_PeriodicVerifierHook(every_n=verify_every_n_actions, verifier=predicate))
+
         return _ReActRunner(
             name=name,
             llm=llm,
             tools=tools or [],
             skills=skills or [],
-            hooks=hooks,
+            hooks=hooks or None,
             max_iterations=max_iterations,
             max_completion_recheck_attempts=max_completion_recheck_attempts,
             instructions=instructions or _DEFAULT_REACT_INSTRUCTIONS,
-            completion_check=completion_check,
+            completion_check=predicate,
             completion_followup=completion_followup,
             auto_continue_on_promise=auto_continue_on_promise,
             promise_patterns=ReActAgent._PROMISE_PATTERNS,

@@ -39,30 +39,48 @@ def download_whisper(model_size: str = "small"):
 
 
 def download_kokoro():
-    import kokoro
+    """Cache the Kokoro ONNX model + voice pack the TTS backend actually loads.
+
+    Must go through the same ``_ensure_kokoro_model`` the backend uses. An
+    earlier version imported the torch-based ``kokoro`` package, which is not a
+    dependency of this project (we ship ``kokoro-onnx``), so setup crashed
+    before downloading anything.
+    """
+    from edgevox.tts.kokoro import _ensure_kokoro_model
 
     print("Downloading Kokoro TTS model + voice pack ...")
-    pipeline = kokoro.KPipeline(lang_code="a")
-    # Trigger voice download
-    for _ in pipeline("Test.", voice="af_heart"):
-        pass
-    print("  Kokoro ready.")
+    model_path, voices_path = _ensure_kokoro_model()
+    print(f"  Model:  {model_path}")
+    print(f"  Voices: {voices_path}")
 
 
 def download_sherpa_vi():
     from edgevox.stt.sherpa_stt import _ensure_model
 
-    print("Downloading Sherpa-ONNX Zipformer Vietnamese (30M int8) ...")
+    print("Downloading Sherpa-ONNX Zipformer Vietnamese ...")
     model_dir = _ensure_model()
     print(f"  Cached at: {model_dir}")
 
 
 def download_silero_vad():
-    from silero_vad import load_silero_vad
+    """Confirm the Silero VAD v6 ONNX that ships inside faster-whisper.
 
-    print("Downloading Silero VAD ...")
-    _ = load_silero_vad(onnx=True)
-    print("  Silero VAD ready.")
+    Nothing to fetch: the recorder loads ``silero_vad_v6.onnx`` from
+    faster-whisper's bundled assets via onnxruntime, so there is no torch and no
+    ``silero_vad`` package in the dependency set. An earlier version imported
+    ``silero_vad`` and crashed setup on a module that was never a dependency.
+    """
+    import os
+
+    from faster_whisper.utils import get_assets_path
+
+    model_path = os.path.join(get_assets_path(), "silero_vad_v6.onnx")
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(
+            f"Silero VAD v6 not found at {model_path}. It ships with faster-whisper; reinstall faster-whisper."
+        )
+    print("Checking Silero VAD (bundled with faster-whisper) ...")
+    print(f"  Found: {model_path}")
 
 
 def main():

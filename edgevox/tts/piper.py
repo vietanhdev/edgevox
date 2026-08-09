@@ -2,6 +2,11 @@
 
 Models are served from nrl-ai/edgevox-models on HuggingFace with fallback
 to the original upstream repos.
+
+**Requires the opt-in ``piper`` extra**, because ``piper-tts`` is
+GPL-3.0-or-later (it was MIT up to 1.2.0 and relicensed at 1.3.0 under the same
+PyPI name, embedding espeak-ng in the same release). EdgeVox is MIT and does not
+install it by default. See the ``piper`` extra in ``pyproject.toml``.
 """
 
 from __future__ import annotations
@@ -99,7 +104,17 @@ class PiperTTS(BaseTTS):
         return model_path, config_path
 
     def __init__(self, voice: str = "vi-vais1000"):
-        from piper import PiperVoice
+        try:
+            from piper import PiperVoice
+        except ImportError as e:
+            raise ImportError(
+                "Piper TTS is not installed. It ships as an opt-in extra because "
+                "piper-tts is GPL-3.0-or-later, which EdgeVox (MIT) does not install "
+                "by default:\n\n"
+                "    pip install 'edgevox[piper]'\n\n"
+                "Installing it adds GPL-3 code to your environment. To stay MIT-clean, "
+                "use a language served by the Kokoro or Supertonic backends instead."
+            ) from e
 
         if voice not in self._VOICES:
             raise ValueError(f"Unknown Piper voice: {voice}. Available: {list(self._VOICES)}")

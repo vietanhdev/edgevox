@@ -341,7 +341,7 @@ The LLM never enters the reactive layer. Safety reflexes bypass it. Skills expos
 | VAD | Silero VAD v6 | ~2 MB | ~10 MB |
 | STT | whisper-small | 500 MB | ~600 MB |
 | STT | whisper-large-v3-turbo | 1.5 GB | ~2 GB |
-| LLM | Gemma 4 E2B IT Q4_K_M | 1.8 GB | ~2.5 GB |
+| LLM | Gemma 4 E2B IT Q4_K_M | 3.11 GB | ~3.7 GB |
 | TTS | Kokoro 82M | 200 MB | ~300 MB |
 | Wake | pymicro-wakeword | ~5 MB | ~10 MB |
 

@@ -1,7 +1,23 @@
 """Sherpa-ONNX Zipformer STT backend for Vietnamese.
 
-30M params (int8), RTF ~0.01 on CPU — native ONNX, Apache 2.0.
-Uses transducer (encoder + decoder + joiner) architecture.
+Native ONNX transducer (encoder + decoder + joiner), no torch at runtime.
+
+Provenance and licence, verified 2026-08-09:
+
+* Weights: ``csukuangfj/sherpa-onnx-zipformer-vi-2025-04-20``, whose card states
+  "Models in this directory are from https://huggingface.co/zzasdf/viet_iter3_pseudo_label".
+* That upstream (VietASR, 68M) declares ``license: apache-2.0``.
+
+The sherpa-onnx mirror itself declares no licence, so the upstream is the
+authority; keep this note in sync if the pin moves.
+
+Until 2026-08-09 this module pinned ``hynt/Zipformer-30M-RNNT-6000h`` (via the
+``…-vi-30M-int8-2026-02-09`` mirror) and this docstring claimed "Apache 2.0".
+That upstream is in fact ``cc-by-nc-nd-4.0``: NonCommercial *and* NoDerivatives,
+which an MIT project cannot ship, and under which the int8 conversion and our
+re-host were themselves derivatives. The replacement is measurably weaker on
+VLSP2020-T1 (14.45 vs 12.29 WER, publisher-reported, not measured here); that
+regression is the price of a licence we can actually distribute.
 """
 
 from __future__ import annotations
@@ -12,7 +28,7 @@ import time
 from pathlib import Path
 
 import numpy as np
-from huggingface_hub import hf_hub_download, snapshot_download
+from huggingface_hub import hf_hub_download
 
 from edgevox.stt import BaseSTT
 
@@ -45,26 +61,24 @@ _preload_onnxruntime()
 
 log = logging.getLogger(__name__)
 
-# Primary: consolidated repo; Fallback: original upstream
-_MODELS_REPO = "nrl-ai/edgevox-models"
-_MODELS_SUBFOLDER = "stt/sherpa-zipformer-vi-30M-int8"
-_FALLBACK_REPO = "csukuangfj2/sherpa-onnx-zipformer-vi-30M-int8-2026-02-09"
-_MODEL_FILES = ["encoder.int8.onnx", "decoder.onnx", "joiner.int8.onnx", "tokens.txt"]
+# Apache-2.0 upstream (see module docstring). The previous primary,
+# ``nrl-ai/edgevox-models`` at ``stt/sherpa-zipformer-vi-30M-int8``, re-hosts
+# CC-BY-NC-ND weights and is deliberately NOT consulted any more; those files
+# should be removed from that repo separately.
+_MODELS_REPO = "csukuangfj/sherpa-onnx-zipformer-vi-2025-04-20"
+_ENCODER = "encoder-epoch-12-avg-8.onnx"
+_DECODER = "decoder-epoch-12-avg-8.onnx"
+_JOINER = "joiner-epoch-12-avg-8.onnx"
+_TOKENS = "tokens.txt"
+_MODEL_FILES = [_ENCODER, _DECODER, _JOINER, _TOKENS]
 
 
 def _ensure_model() -> Path:
-    """Download the model if needed, trying consolidated repo first."""
-    # Try consolidated repo
-    try:
-        first = hf_hub_download(_MODELS_REPO, _MODEL_FILES[0], subfolder=_MODELS_SUBFOLDER)
-        model_dir = Path(first).parent
-        for f in _MODEL_FILES[1:]:
-            hf_hub_download(_MODELS_REPO, f, subfolder=_MODELS_SUBFOLDER)
-        return model_dir
-    except Exception:
-        log.warning(f"Failed to download from {_MODELS_REPO}, trying fallback...")
-
-    model_dir = Path(snapshot_download(_FALLBACK_REPO, allow_patterns=_MODEL_FILES))
+    """Download the Vietnamese zipformer if not already cached."""
+    first = hf_hub_download(_MODELS_REPO, _MODEL_FILES[0])
+    model_dir = Path(first).parent
+    for f in _MODEL_FILES[1:]:
+        hf_hub_download(_MODELS_REPO, f)
     return model_dir
 
 
@@ -81,15 +95,15 @@ class SherpaSTT(BaseSTT):
         import sherpa_onnx
 
         provider = device or _pick_provider()
-        log.info(f"Loading Sherpa-ONNX Zipformer-vi-30M (int8) on {provider}...")
+        log.info(f"Loading Sherpa-ONNX Zipformer-vi on {provider}...")
 
         model_dir = _ensure_model()
 
         self._recognizer = sherpa_onnx.OfflineRecognizer.from_transducer(
-            encoder=str(model_dir / "encoder.int8.onnx"),
-            decoder=str(model_dir / "decoder.onnx"),
-            joiner=str(model_dir / "joiner.int8.onnx"),
-            tokens=str(model_dir / "tokens.txt"),
+            encoder=str(model_dir / _ENCODER),
+            decoder=str(model_dir / _DECODER),
+            joiner=str(model_dir / _JOINER),
+            tokens=str(model_dir / _TOKENS),
             num_threads=4,
             sample_rate=16000,
             feature_dim=80,
@@ -97,10 +111,10 @@ class SherpaSTT(BaseSTT):
             provider=provider,
         )
         self._backend_name = "Sherpa"
-        self._model_size = "zipformer-vi-30M-int8"
+        self._model_size = "zipformer-vi-68M"
         self._device = provider
         self._warmed_up = False
-        log.info("Sherpa-ONNX loaded (30M params, int8).")
+        log.info("Sherpa-ONNX loaded (VietASR zipformer, Apache-2.0).")
 
     def transcribe(self, audio: np.ndarray, language: str = "vi") -> str:
         t0 = time.perf_counter()

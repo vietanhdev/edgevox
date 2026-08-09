@@ -59,7 +59,9 @@ PRESETS: dict[str, ModelPreset] = {
             slug="gemma-4-e2b",
             repo="unsloth/gemma-4-E2B-it-GGUF",
             filename="gemma-4-E2B-it-Q4_K_M.gguf",
-            size_gb=1.8,
+            # 3.11 GB measured from the HF file listing 2026-08-09; this said
+            # 1.8 until then, understating the download by 1.7x.
+            size_gb=3.11,
             family="gemma",
             description="Google Gemma 4 E2B Instruct — the EdgeVox default.",
             # Gemma uses its own ``<|tool_call>call:…<tool_call|>`` syntax,
@@ -214,14 +216,23 @@ PRESETS: dict[str, ModelPreset] = {
             description="Team-ACE ToolACE-2-Llama-3.1-8B — Apache-2.0, SOTA 8B on BFCL v3 (paper).",
             tool_call_parsers=("pythonic", "llama32", "hermes"),
         ),
-        # MadeAgents Hammer 2.1 — qwen-research license.
+        # MadeAgents Hammer 2.1 0.5B.
+        #
+        # LICENCE WARNING: the model card declares ``cc-by-nc-4.0``
+        # (verified via the HF API 2026-08-09). This comment previously read
+        # "qwen-research license", which is wrong. NonCommercial means
+        # integrators cannot ship this in a commercial product, so it must not
+        # be recommended as a default anywhere in user-facing docs.
         ModelPreset(
             slug="hammer-2.1-0.5b",
             repo="MaayanYosef/Hammer2.1-0.5b-Q4_K_M-GGUF",
             filename="hammer2.1-0.5b-q4_k_m.gguf",
             size_gb=0.4,
             family="hammer",
-            description="MadeAgents Hammer 2.1 0.5B — Qwen2.5-Coder base, best-in-class ≤1B on BFCL v3.",
+            description=(
+                "MadeAgents Hammer 2.1 0.5B — Qwen2.5-Coder base, best-in-class ≤1B on BFCL v3. "
+                "NON-COMMERCIAL (cc-by-nc-4.0)."
+            ),
             tool_call_parsers=("xlam", "hermes"),
         ),
         # --- Embodied / robotics ----------------------------------------
