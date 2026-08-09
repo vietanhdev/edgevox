@@ -92,6 +92,8 @@ flowchart LR
     D --> C
 
     E[llama-server --jinja<br/>subprocess] -.future option.-> C
+    classDef focal fill:#f3bd92,stroke:#8c4000,color:#4a2200,stroke-width:2px
+    class D focal
 ```
 
 **Path A** (subprocess to `llama-server --jinja`) gets the upstream autoparser for free but adds a subprocess + HTTP hop to the hot path.

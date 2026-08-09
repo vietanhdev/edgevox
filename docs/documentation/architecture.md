@@ -21,6 +21,8 @@ flowchart TD
     SPLIT -->|sentences| TTS
     TTS -->|audio| SPK
     SPK -.->|interrupt| VAD
+    classDef focal fill:#f3bd92,stroke:#8c4000,color:#4a2200,stroke-width:2px
+    class SPLIT focal
 ```
 
 ## Streaming Strategy
@@ -66,6 +68,8 @@ stateDiagram-v2
     Speaking --> Interrupted: user speaks
     Interrupted --> Listening: capture new speech
     Speaking --> Listening: response complete
+    classDef focal fill:#f3bd92,stroke:#8c4000,color:#4a2200,stroke-width:2px
+    class Interrupted focal
 ```
 
 While the bot is speaking:
@@ -100,6 +104,8 @@ flowchart LR
     CFG -->|piper| PIPER
     CFG -->|supertonic| SUPER
     CFG -->|pythaitts| THAI
+    classDef focal fill:#f3bd92,stroke:#8c4000,color:#4a2200,stroke-width:2px
+    class CFG focal
 ```
 
 The `create_stt()` and `create_tts()` factories consult `config.py` to pick the best model:
@@ -160,6 +166,8 @@ flowchart LR
 
     ENQ -. _buf_lock .- DRAIN
     REF -. _RefBuffer .-> RECORDER[AudioRecorder]
+    classDef focal fill:#f3bd92,stroke:#8c4000,color:#4a2200,stroke-width:2px
+    class CB focal
 ```
 
 Why callback instead of `stream.write()`:
@@ -188,6 +196,8 @@ flowchart LR
     PROC -->|call_from_thread| TUI
     MIC -->|on_level| TUI
     MIC -->|on_interrupt| PROC
+    classDef focal fill:#f3bd92,stroke:#8c4000,color:#4a2200,stroke-width:2px
+    class PROC focal
 ```
 
 - **Main thread**: Textual TUI event loop (or FastAPI event loop in web mode)

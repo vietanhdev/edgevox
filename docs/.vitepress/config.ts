@@ -1,8 +1,11 @@
 import { defineConfig } from "vitepress";
 import { withMermaid } from "vitepress-plugin-mermaid";
 
-export default withMermaid(
-  defineConfig({
+// `withMermaid` takes ONE config object carrying a `mermaid` key. Passing the
+// mermaid options as a second argument silently drops them — which is why every
+// diagram rendered in mermaid's stock lavender until 2026-08-09.
+export default withMermaid({
+  ...defineConfig({
     title: "EdgeVox",
     description: "Offline voice agent framework for robots — agents, skills, workflows, 2D/3D simulation, sub-second voice pipeline",
     lang: "en-US",
@@ -25,7 +28,7 @@ export default withMermaid(
       ["link", { rel: "icon", type: "image/svg+xml", href: "/logo.svg" }],
       [
         "meta",
-        { name: "theme-color", content: "#c96442" },
+        { name: "theme-color", content: "#a54c00" },
       ],
     ],
 
@@ -133,25 +136,56 @@ export default withMermaid(
       },
     },
   }),
-  {
-    mermaid: {
-      theme: "neutral",
-      themeVariables: {
-        primaryColor: "#f5ebe0",
-        primaryTextColor: "#1a1613",
-        primaryBorderColor: "#c96442",
-        lineColor: "#c96442",
-        secondaryColor: "#faf7f2",
-        tertiaryColor: "#f5f0e8",
-        background: "#faf7f2",
-        mainBkg: "#f5ebe0",
-        nodeBorder: "#c96442",
-        clusterBkg: "#faf7f2",
-        clusterBorder: "#d4c9b9",
-        titleColor: "#1a1613",
-        edgeLabelBackground: "#faf7f2",
-        nodeTextColor: "#1a1613",
-      },
+  // "Ink & Signal" diagram styling — neutral ink-on-paper nodes with burnt
+  // orange reserved for the one layer that should pull the eye. Ported from
+  // www.vietanh.dev so diagrams read the same across every property.
+  mermaid: {
+    theme: "base",
+    themeVariables: {
+      primaryColor: "#f1f1ef", // warm-100 node fill
+      primaryTextColor: "#1a1a1d", // ink text
+      primaryBorderColor: "#1a1a1d", // ink border (crisp)
+      lineColor: "#525250", // neutral ink-gray edges
+      secondaryColor: "#f3bd92", // signal-200 accent node
+      secondaryBorderColor: "#8c4000", // signal-600
+      secondaryTextColor: "#1a1a1d",
+      tertiaryColor: "#e3e3e1", // warm-200
+      tertiaryBorderColor: "#a6a6a3",
+      background: "#fafaf8", // paper
+      mainBkg: "#f1f1ef",
+      nodeBorder: "#1a1a1d",
+      nodeTextColor: "#1a1a1d",
+      clusterBkg: "#fafaf8", // paper inside subgraphs, so nodes read as a layer above
+      clusterBorder: "#cececb",
+      titleColor: "#1a1a1d",
+      edgeLabelBackground: "#fafaf8",
+      // System stack, NOT the Inter webfont: mermaid measures label widths at
+      // render time, so a font that swaps in later renders wider than the box
+      // it was measured for and the label is clipped mid-word.
+      fontFamily: "ui-sans-serif, system-ui, sans-serif",
+      fontSize: "14px",
     },
-  }
-);
+    // Site chrome uses soft corners; mermaid draws sharp rects by default, so
+    // round them here. rx/ry are SVG2 geometry properties, settable from CSS.
+    themeCSS: `
+      .node rect, .node .label-container { rx: 6px; ry: 6px; }
+      .cluster rect { rx: 8px; ry: 8px; }
+    `,
+    // wrappingWidth is the important one: mermaid wraps node labels at 200px by
+    // default, which breaks an ordinary sentence across three lines and
+    // hyphenates mid-word. Most diagrams here are top-down, where horizontal
+    // room is cheap and vertical room is the scarce resource.
+    flowchart: {
+      useMaxWidth: false,
+      htmlLabels: true,
+      wrappingWidth: 340,
+      nodeSpacing: 56,
+      rankSpacing: 48,
+      padding: 14,
+      diagramPadding: 12,
+      curve: "basis",
+    },
+    sequence: { useMaxWidth: false, diagramMarginX: 12, diagramMarginY: 12 },
+    er: { useMaxWidth: false },
+  },
+});

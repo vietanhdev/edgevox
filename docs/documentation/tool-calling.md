@@ -18,6 +18,8 @@ flowchart TD
     F -->|miss| G[Gemma inline / plain name kwargs]
     G -->|match| S
     G -->|miss| R[Plain text reply]
+    classDef focal fill:#f3bd92,stroke:#8c4000,color:#4a2200,stroke-width:2px
+    class C focal
 ```
 
 Four things to notice:

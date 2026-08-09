@@ -1,195 +1,385 @@
-/* EdgeVox — nrl-ai house style: cream paper, geometric sans display, ink body */
+/* EdgeVox — "Ink & Signal", the www.nrl.ai / www.vietanh.dev house system.
+ *
+ * Near-monochrome warm-neutral ink on paper with a single UT-Austin burnt
+ * orange signal accent (Pantone 159, #BF5700). Restraint is the point: ink
+ * carries the page, orange is the rare pop that pulls the eye. Soft 0.75rem
+ * corners, hairline dividers, no hard black rules.
+ *
+ * Tokens mirror www.nrl.ai/app/globals.css so the two sites read as one system.
+ */
 
-@import url("https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Bai+Jamjuree:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap");
 
 :root {
-  /* Terracotta accent — kept; it lines up with nrl-ai's oklch(0.68 0.19 45) */
-  --vp-c-brand-1: #b5563a;
-  --vp-c-brand-2: #a04b32;
-  --vp-c-brand-3: #8a3f2a;
-  --vp-c-brand-soft: rgba(181, 86, 58, 0.1);
+  /* --- Warm neutral scale (ink & paper; not beige) --- */
+  --ev-warm-50: #fafaf8;
+  --ev-warm-100: #f1f1ef;
+  --ev-warm-200: #e3e3e1;
+  --ev-warm-300: #cececb;
+  --ev-warm-400: #a6a6a3;
+  --ev-warm-500: #7e7e7c;
+  --ev-warm-600: #5c5c5a;
+  --ev-warm-700: #424241;
+  --ev-warm-800: #2a2a2a;
+  --ev-warm-900: #1a1a1d;
 
-  --vp-c-tip-1: #b5563a;
-  --vp-c-tip-2: #a04b32;
-  --vp-c-tip-soft: rgba(181, 86, 58, 0.08);
+  /* --- Signal: UT burnt orange, used sparingly --- */
+  --ev-signal-200: #f3bd92;
+  --ev-signal-400: #bf5700;
+  --ev-signal-500: #a54c00;
+  --ev-signal-600: #8c4000;
+  --ev-signal-700: #733500;
 
-  /* Cream palette — neutral, slightly cooler than the old paper tone */
-  --vp-c-bg: #f1ede3;
-  --vp-c-bg-alt: #e8e3d4;
-  --vp-c-bg-soft: #ddd6c2;
-  --vp-c-bg-mute: #cfc6ac;
-  --vp-c-bg-elv: #f7f3e8;
+  --ev-radius-card: 0.75rem;
+  --ev-radius-sm: 0.5rem;
+  --ev-radius-pill: 9999px;
+  --ev-ease: cubic-bezier(0.4, 0, 0.2, 1);
 
-  /* Borders — hairline neutral */
-  --vp-c-divider: #d6cfbe;
-  --vp-c-gutter: #d6cfbe;
-  --vp-c-border: #c0b69e;
+  /* Burnt orange reads fine as text on paper (signal-500 clears contrast),
+     so links and headings may carry it — solid fills get paper text on top. */
+  --vp-c-brand-1: #a54c00;
+  --vp-c-brand-2: #8c4000;
+  --vp-c-brand-3: #733500;
+  --vp-c-brand-soft: rgba(191, 87, 0, 0.1);
 
-  /* Text — neutral ink */
-  --vp-c-text-1: #141414;
-  --vp-c-text-2: #2a2a28;
-  --vp-c-text-3: #6b6860;
+  --vp-c-tip-1: var(--vp-c-brand-1);
+  --vp-c-tip-2: var(--vp-c-brand-2);
+  --vp-c-tip-soft: rgba(191, 87, 0, 0.08);
 
-  --vp-code-block-bg: #e6dfcc;
-  --vp-code-line-highlight-color: rgba(181, 86, 58, 0.09);
+  /* Surfaces — paper, with cards knocked out in pure white */
+  --vp-c-bg: #fafaf8;
+  --vp-c-bg-alt: #f1f1ef;
+  --vp-c-bg-soft: #f1f1ef;
+  --vp-c-bg-mute: #e3e3e1;
+  --vp-c-bg-elv: #ffffff;
+
+  /* Borders — hairlines only */
+  --vp-c-divider: #e3e3e1;
+  --vp-c-gutter: #e3e3e1;
+  --vp-c-border: #cececb;
+
+  /* Text — graded ink */
+  --vp-c-text-1: #1a1a1d;
+  --vp-c-text-2: #424241;
+  --vp-c-text-3: #7e7e7c;
+
+  --vp-code-block-bg: #f1f1ef;
+  --vp-code-line-highlight-color: rgba(191, 87, 0, 0.09);
   --vp-code-tab-divider: var(--vp-c-divider);
-  --vp-code-copy-code-bg: rgba(181, 86, 58, 0.06);
-  --vp-code-copy-code-hover-bg: rgba(181, 86, 58, 0.14);
+  --vp-code-copy-code-bg: rgba(191, 87, 0, 0.06);
+  --vp-code-copy-code-hover-bg: rgba(191, 87, 0, 0.14);
   --vp-code-tab-text-color: var(--vp-c-text-2);
   --vp-code-tab-active-text-color: var(--vp-c-brand-1);
   --vp-code-tab-hover-text-color: var(--vp-c-text-1);
 
-  /* Typography — geometric sans display, sans body, crisp mono */
+  /* Bai Jamjuree for headings, Inter for body — the nrl.ai pairing. Mono is
+     the system stack, same as nrl.ai: one less webfont on a docs site. */
   --vp-font-family-base: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
     Roboto, "Helvetica Neue", Arial, sans-serif;
-  --vp-font-family-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo,
+  --vp-font-family-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco,
     Consolas, monospace;
-  --vp-font-family-display: "Space Grotesk", "Hanken Grotesk", ui-sans-serif,
-    system-ui, sans-serif;
+  --vp-font-family-display: "Bai Jamjuree", ui-sans-serif, system-ui, sans-serif;
 
-  --vp-button-brand-bg: #b5563a;
-  --vp-button-brand-hover-bg: #a04b32;
-  --vp-button-brand-active-bg: #8a3f2a;
-  --vp-button-brand-text: #fbf6ec;
+  --vp-button-brand-bg: var(--ev-signal-500);
+  --vp-button-brand-hover-bg: var(--ev-signal-600);
+  --vp-button-brand-active-bg: var(--ev-signal-700);
+  --vp-button-brand-border: transparent;
+  --vp-button-brand-hover-border: transparent;
+  --vp-button-brand-active-border: transparent;
+  --vp-button-brand-text: var(--ev-warm-50);
 
-  --vp-badge-tip-bg: rgba(181, 86, 58, 0.12);
-  --vp-badge-tip-text: #a04b32;
+  --vp-badge-tip-bg: rgba(191, 87, 0, 0.12);
+  --vp-badge-tip-text: var(--ev-signal-600);
+
+  /* The navbar is the one large orange field on the site. */
+  --vp-nav-bg-color: rgba(165, 76, 0, 0.92);
 }
 
 /* Light-only theme — dark variants intentionally removed; appearance: false in
    .vitepress/config.ts hides the toggle. */
 
 body {
-  font-size: 16px;
-  line-height: 1.72;
-  letter-spacing: -0.005em;
+  font-size: 15.5px;
+  line-height: 1.7;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  font-feature-settings: "ss01", "cv11";
-  position: relative;
+}
+
+::selection {
+  background: var(--ev-signal-500);
+  color: var(--ev-warm-50);
+}
+
+:focus-visible {
+  outline: 2px solid var(--ev-signal-500);
+  outline-offset: 2px;
+  border-radius: var(--ev-radius-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* ===== NAV — orange field, paper text (the nrl.ai header signature) ===== */
+
+.VPNavBar,
+.VPNavBar.has-sidebar .title,
+.VPNavBar.has-sidebar .content-body,
+.VPNavBar:not(.has-sidebar):not(.top) {
+  background-color: var(--vp-nav-bg-color) !important;
+  border-bottom-color: transparent !important;
+}
+
+.VPNavBar {
+  backdrop-filter: blur(12px) saturate(1.05);
+}
+
+.VPNavBar.has-sidebar .divider-line {
+  background-color: rgba(255, 255, 255, 0.16) !important;
+}
+
+.VPNavBarTitle .title {
+  font-family: var(--vp-font-family-display) !important;
+  font-weight: 600 !important;
+  font-size: 1.05rem !important;
+  letter-spacing: -0.015em;
+  color: var(--ev-warm-50) !important;
+  border-bottom: none !important;
+}
+
+/* Any logo sits on a white chip so it never fights the orange field */
+.VPNavBarTitle .logo {
+  border-radius: var(--ev-radius-sm);
+  background: rgba(255, 255, 255, 0.95);
+  padding: 3px;
+  height: 28px;
+  width: 28px;
+  margin-right: 8px;
+}
+
+.VPNavBarMenuLink,
+.VPNavBarMenuGroup .button,
+.VPNavBarMenuGroup .button .text,
+.VPNavBar .VPSocialLink,
+.VPNavBar .VPNavBarExtra .button {
+  font-family: var(--vp-font-family-base) !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  color: #ffffff !important;
+  border-radius: var(--ev-radius-card);
+  transition: background 150ms var(--ev-ease), opacity 150ms var(--ev-ease);
+}
+
+/* VitePress icons are CSS-masked divs painted with background-color, so the
+   chevron and social glyphs need painting separately from `color`. */
+.VPNavBarMenuGroup .button .vpi-chevron-down,
+.VPNavBar .VPSocialLink > svg,
+.VPNavBar .VPFlyout .button .option-icon,
+.VPNavBar .VPFlyout .button .text .vpi-chevron-down {
+  background-color: #ffffff !important;
+  fill: #ffffff !important;
+  color: #ffffff !important;
+  opacity: 0.9;
+}
+
+.VPNavBarMenuLink:hover,
+.VPNavBarMenuLink.active,
+.VPNavBarMenuGroup .button:hover,
+.VPNavBar .VPFlyout:hover .button,
+.VPNavBar .VPSocialLink:hover {
+  color: #ffffff !important;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.VPNavBarMenuLink::after,
+.VPNavBarMenuGroup .button::after {
+  display: none;
+}
+
+/* The dropdown panel itself returns to paper — white-on-orange is the bar only */
+.VPNavBar .VPMenu {
+  background: #ffffff !important;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: var(--ev-radius-card) !important;
+  box-shadow: 0 12px 32px -12px rgba(26, 26, 29, 0.28) !important;
+}
+
+.VPNavBar .VPMenu .VPMenuLink .link,
+.VPNavBar .VPMenu .link .text {
+  color: var(--vp-c-text-1) !important;
+  font-size: 13.5px !important;
+  border-radius: var(--ev-radius-sm);
+}
+
+.VPNavBar .VPMenu .VPMenuLink .link:hover,
+.VPNavBar .VPMenu .VPMenuLink .link:hover .text {
+  color: var(--ev-signal-500) !important;
+  background: var(--ev-warm-100);
+}
+
+.VPNavBarHamburger .top,
+.VPNavBarHamburger .middle,
+.VPNavBarHamburger .bottom {
+  background-color: rgba(255, 255, 255, 0.9) !important;
+}
+
+/* Search button on the orange field */
+.VPNavBarSearch .DocSearch-Button {
+  border-radius: var(--ev-radius-card) !important;
+  background: rgba(255, 255, 255, 0.14) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+}
+
+.VPNavBarSearch .DocSearch-Button:hover {
+  background: rgba(255, 255, 255, 0.22) !important;
+  box-shadow: none !important;
+}
+
+.VPNavBarSearch .DocSearch-Button .DocSearch-Search-Icon,
+.VPNavBarSearch .DocSearch-Button-Placeholder,
+.VPNavBarSearch .DocSearch-Button-Keys .DocSearch-Button-Key {
+  color: rgba(255, 255, 255, 0.82) !important;
+}
+
+.VPNavBarSearch .DocSearch-Button-Keys .DocSearch-Button-Key {
+  background: rgba(255, 255, 255, 0.16);
+  border: none;
+  box-shadow: none;
+}
+
+/* Mobile drop-down panel returns to paper */
+.VPNavScreen {
+  background: var(--vp-c-bg) !important;
+}
+
+.VPLocalNav {
+  background: var(--vp-c-bg) !important;
+  border-bottom: 1px solid var(--vp-c-divider) !important;
 }
 
 /* ===== HERO ===== */
 
 .VPHero {
   position: relative;
-  padding-bottom: 64px !important;
+  padding-bottom: 56px !important;
 }
 
-/* Editorial meta row above the hero title — attached to .main so it stacks
-   above the name, not as a flex sibling to the left of it */
+/* Editorial marker row above the title — mono, letterspaced, muted ink */
 .VPHero .main::before {
   content: "OFFLINE  ·  REAL-TIME  ·  ROS2-NATIVE  ·  MIT";
   display: block;
   font-family: var(--vp-font-family-mono);
   font-size: 11px;
-  letter-spacing: 0.22em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--vp-c-brand-1);
-  margin-bottom: 24px;
+  color: var(--ev-warm-600);
+  margin-bottom: 22px;
   padding-bottom: 14px;
-  border-bottom: 1px solid var(--vp-c-border);
+  border-bottom: 1px solid var(--vp-c-divider);
   max-width: 540px;
 }
 
-/* Stat strip under the actions */
 .VPHero .main::after {
   content: "16 LANGUAGES   ·   56 VOICES   ·   STREAMING PIPELINE   ·   CPU / CUDA / METAL";
   display: block;
-  margin-top: 32px;
+  margin-top: 30px;
   padding-top: 18px;
   border-top: 1px solid var(--vp-c-divider);
   font-family: var(--vp-font-family-mono);
   font-size: 11px;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--vp-c-text-3);
+  color: var(--ev-warm-600);
   max-width: 560px;
 }
 
-/* Keep hero text inside its column so it doesn't spill behind the image */
 .VPHero .main {
   max-width: 100%;
   overflow-wrap: break-word;
 }
 
-.VPHero .name {
+/* VitePress puts .name and .clip on the SAME element (not nested), so the
+   wordmark itself carries the accent — the nrl.ai "one word in signal" idiom.
+   -webkit-text-fill-color must be currentColor, not unset: it is an inherited
+   property, so `unset` resolves to the parent's *used* ink value and silently
+   repaints the orange black. */
+.VPHero .name,
+.VPHero .name.clip {
   font-family: var(--vp-font-family-display) !important;
-  font-weight: 600 !important;
-  font-size: clamp(2.8rem, 5.2vw, 4.6rem) !important;
-  line-height: 1.02 !important;
-  letter-spacing: -0.035em !important;
-  color: var(--vp-c-text-1) !important;
-  font-variation-settings: "opsz" 144, "SOFT" 30;
+  font-weight: 700 !important;
+  font-size: clamp(2.4rem, 6vw, 3.9rem) !important;
+  line-height: 1.05 !important;
+  letter-spacing: -0.03em !important;
+  color: var(--ev-signal-500) !important;
   background: none !important;
-  -webkit-text-fill-color: unset !important;
-}
-
-.VPHero .name .clip {
-  color: var(--vp-c-brand-1) !important;
-  background: none !important;
-  -webkit-background-clip: unset !important;
-  -webkit-text-fill-color: unset !important;
-  font-style: normal;
+  -webkit-background-clip: border-box !important;
+  -webkit-text-fill-color: currentColor !important;
 }
 
 .VPHero .text {
   font-family: var(--vp-font-family-display) !important;
-  font-weight: 500 !important;
-  font-size: clamp(1.15rem, 1.6vw, 1.4rem) !important;
-  line-height: 1.3 !important;
-  color: var(--vp-c-text-2) !important;
-  letter-spacing: -0.015em !important;
-  margin-top: 8px !important;
+  font-weight: 600 !important;
+  font-size: clamp(1.15rem, 1.7vw, 1.5rem) !important;
+  line-height: 1.25 !important;
+  color: var(--vp-c-text-1) !important;
+  letter-spacing: -0.02em !important;
+  margin-top: 10px !important;
   max-width: 100%;
   overflow-wrap: break-word;
-  word-break: break-word;
 }
 
 .VPHero .tagline {
   font-family: var(--vp-font-family-base) !important;
-  color: var(--vp-c-text-3) !important;
-  font-size: 15.5px !important;
+  color: var(--ev-warm-700) !important;
+  font-size: 15px !important;
   font-weight: 400 !important;
-  line-height: 1.55 !important;
-  max-width: 540px;
-  margin-top: 16px !important;
+  line-height: 1.7 !important;
+  max-width: 62ch;
+  margin-top: 14px !important;
 }
 
-.VPHero .actions .VPButton {
-  border-radius: 2px !important;
-  font-family: var(--vp-font-family-mono) !important;
+/* Buttons — soft corners, sentence case, body font (nrl.ai .btn) */
+.VPHero .actions .VPButton,
+.vp-doc .VPButton {
+  border-radius: var(--ev-radius-card) !important;
+  font-family: var(--vp-font-family-base) !important;
   font-weight: 500 !important;
-  font-size: 13px !important;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  padding: 0 22px !important;
-  height: 44px !important;
-  line-height: 44px !important;
-  transition: all 0.2s ease;
+  font-size: 13.5px !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  padding: 0 18px !important;
+  height: 42px !important;
+  line-height: 42px !important;
+  border: 1px solid transparent !important;
+  transition: background 150ms var(--ev-ease), color 150ms var(--ev-ease),
+    border-color 150ms var(--ev-ease), transform 150ms var(--ev-ease);
+}
+
+.VPHero .actions .VPButton:active {
+  transform: translateY(1px);
 }
 
 .VPHero .actions .VPButton.brand {
-  background: var(--vp-button-brand-bg) !important;
-  border-color: var(--vp-button-brand-bg) !important;
-  color: var(--vp-button-brand-text) !important;
+  background: var(--ev-signal-500) !important;
+  color: var(--ev-warm-50) !important;
 }
 
 .VPHero .actions .VPButton.brand:hover {
-  background: var(--vp-c-text-1) !important;
-  border-color: var(--vp-c-text-1) !important;
-  color: var(--vp-c-bg) !important;
+  background: var(--ev-signal-600) !important;
 }
 
 .VPHero .actions .VPButton.alt {
-  border-color: var(--vp-c-text-1) !important;
-  color: var(--vp-c-text-1) !important;
   background: transparent !important;
+  color: var(--vp-c-text-1) !important;
+  border-color: var(--vp-c-divider) !important;
 }
 
 .VPHero .actions .VPButton.alt:hover {
-  background: var(--vp-c-text-1) !important;
-  color: var(--vp-c-bg) !important;
+  background: var(--ev-warm-100) !important;
+  border-color: var(--ev-warm-300) !important;
 }
 
 /* ===== FEATURE CARDS ===== */
@@ -199,56 +389,47 @@ body {
   display: block;
   font-family: var(--vp-font-family-mono);
   font-size: 11px;
-  letter-spacing: 0.22em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--vp-c-brand-1);
-  margin: 12px 0 28px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--vp-c-border);
+  color: var(--ev-warm-600);
+  margin: 12px 0 24px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--vp-c-divider);
 }
 
 .VPFeature {
-  border: none !important;
-  border-top: 2px solid var(--vp-c-text-1) !important;
-  background: transparent !important;
-  border-radius: 0 !important;
-  padding: 22px 4px 12px !important;
-  transition: all 0.25s ease;
+  background: #fff !important;
+  border: 1px solid var(--vp-c-divider) !important;
+  border-radius: var(--ev-radius-card) !important;
+  transition: border-color 200ms var(--ev-ease), box-shadow 200ms var(--ev-ease),
+    transform 200ms var(--ev-ease);
 }
 
 .VPFeature:hover {
-  border-top-color: var(--vp-c-brand-1) !important;
+  border-color: rgba(165, 76, 0, 0.4) !important;
   transform: translateY(-2px);
-  background: transparent !important;
-  box-shadow: none !important;
-}
-
-.VPFeature .box {
-  padding: 0 !important;
-  background: transparent !important;
+  box-shadow: 0 6px 24px -8px rgba(26, 26, 29, 0.18) !important;
 }
 
 .VPFeature .icon {
-  background: transparent !important;
-  font-size: 28px !important;
-  margin-bottom: 8px !important;
-  width: auto !important;
-  height: auto !important;
+  background: var(--ev-warm-100) !important;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: var(--ev-radius-card) !important;
+  font-size: 22px !important;
 }
 
 .VPFeature .title {
   font-family: var(--vp-font-family-display) !important;
   color: var(--vp-c-text-1) !important;
   font-weight: 600 !important;
-  font-size: 1.35rem !important;
-  letter-spacing: -0.02em !important;
-  line-height: 1.25 !important;
-  margin-bottom: 10px !important;
+  font-size: 1.15rem !important;
+  letter-spacing: -0.015em !important;
+  line-height: 1.3 !important;
 }
 
 .VPFeature .details {
-  color: var(--vp-c-text-2) !important;
-  font-size: 14.5px !important;
+  color: var(--ev-warm-700) !important;
+  font-size: 14px !important;
   line-height: 1.65 !important;
 }
 
@@ -262,108 +443,85 @@ body {
 .VPSidebarItem.level-0 > .item > .text {
   font-family: var(--vp-font-family-mono) !important;
   font-size: 11px !important;
-  letter-spacing: 0.18em !important;
+  letter-spacing: 0.08em !important;
   text-transform: uppercase !important;
-  color: var(--vp-c-brand-1) !important;
+  color: var(--ev-warm-600) !important;
   font-weight: 500 !important;
 }
 
 .VPSidebarItem .link {
-  font-size: 14.5px !important;
+  font-size: 14px !important;
   font-weight: 450 !important;
-  transition: color 0.15s ease;
+  border-radius: var(--ev-radius-sm);
+  transition: color 150ms var(--ev-ease);
 }
 
-.VPSidebarItem.is-active > .item > .link {
-  color: var(--vp-c-brand-1) !important;
+.VPSidebarItem.is-active > .item > .link,
+.VPSidebarItem.is-active > .item > .link > .text {
+  color: var(--ev-signal-500) !important;
   font-weight: 600 !important;
 }
 
-/* ===== NAV ===== */
-
-.VPNavBar {
-  border-bottom: 1px solid var(--vp-c-divider) !important;
-  background: rgba(241, 237, 227, 0.88) !important;
-  backdrop-filter: blur(14px) saturate(1.05);
-}
-
-.VPNavBarTitle .title {
-  font-family: var(--vp-font-family-display) !important;
-  font-weight: 600 !important;
-  font-size: 1.25rem !important;
-  color: var(--vp-c-text-1) !important;
-  letter-spacing: -0.02em;
-}
-
-.VPNavBarMenuLink,
-.VPNavBarMenuGroup .button {
-  font-family: var(--vp-font-family-mono) !important;
-  font-size: 12px !important;
-  letter-spacing: 0.08em !important;
-  text-transform: uppercase !important;
-  font-weight: 500 !important;
+.VPSidebarItem.is-active > .item .indicator {
+  background-color: var(--ev-signal-500) !important;
 }
 
 /* ===== CONTENT ===== */
 
 .vp-doc h1 {
   font-family: var(--vp-font-family-display);
-  font-weight: 600;
-  font-size: clamp(2.2rem, 4vw, 3rem);
+  font-weight: 700;
+  font-size: clamp(2rem, 4vw, 2.7rem);
   line-height: 1.1;
   letter-spacing: -0.03em;
-  border-bottom: 1px solid var(--vp-c-border);
-  padding-bottom: 20px;
-  margin-bottom: 28px;
+  padding-bottom: 18px;
+  margin-bottom: 26px;
+  border-bottom: 1px solid var(--vp-c-divider);
   color: var(--vp-c-text-1);
 }
 
 .vp-doc h2 {
   font-family: var(--vp-font-family-display);
-  font-weight: 600;
-  font-size: 1.75rem;
-  letter-spacing: -0.02em;
+  font-weight: 700;
+  font-size: 1.6rem;
+  letter-spacing: -0.025em;
   border-top: 1px solid var(--vp-c-divider);
-  padding-top: 28px;
-  margin-top: 48px;
-  position: relative;
-}
-
-.vp-doc h2::before {
-  content: "§";
-  color: var(--vp-c-brand-1);
-  font-family: var(--vp-font-family-display);
-  font-weight: 400;
-  margin-right: 0.4em;
-  opacity: 0.7;
+  padding-top: 26px;
+  margin-top: 46px;
 }
 
 .vp-doc h3 {
   font-family: var(--vp-font-family-display);
   font-weight: 600;
-  font-size: 1.3rem;
-  letter-spacing: -0.015em;
+  font-size: 1.2rem;
+  letter-spacing: -0.02em;
 }
 
-.vp-doc p {
-  font-size: 16px;
-  line-height: 1.72;
+.vp-doc p,
+.vp-doc li {
+  font-size: 15.5px;
+  line-height: 1.7;
 }
 
-/* Inline code */
+/* Inline code — a tinted chip, not a colored shout */
 .vp-doc :not(pre) > code {
-  background: var(--vp-c-brand-soft) !important;
-  color: var(--vp-c-brand-2) !important;
-  border-radius: 2px;
-  padding: 2px 6px;
-  font-size: 0.88em;
+  background: var(--ev-warm-100) !important;
+  color: var(--ev-warm-800) !important;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: var(--ev-radius-sm);
+  padding: 1px 5px;
+  font-size: 0.86em;
   font-weight: 500;
 }
 
-/* Code blocks — flat hairline, no stamp shadow */
+.vp-doc a > code {
+  color: var(--ev-signal-600) !important;
+}
+
+/* Code blocks — soft card, hairline border */
 .vp-doc div[class*="language-"] {
-  border: 1px solid var(--vp-c-border) !important;
-  border-radius: 2px !important;
+  border: 1px solid var(--vp-c-divider) !important;
+  border-radius: var(--ev-radius-card) !important;
   background: var(--vp-code-block-bg) !important;
 }
 
@@ -372,122 +530,192 @@ body {
 }
 
 .vp-doc div[class*="language-"] > span.lang {
-  color: var(--vp-c-text-3) !important;
+  color: var(--ev-warm-500) !important;
   font-family: var(--vp-font-family-mono) !important;
   font-size: 11px !important;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .vp-doc div[class*="language-"] > button.copy {
-  border-radius: 2px;
+  border-radius: var(--ev-radius-sm);
 }
 
-/* Tables — editorial */
+/* Tables — quiet rules, mono column heads */
 .vp-doc table {
   border-collapse: collapse;
-  font-size: 14.5px;
+  font-size: 14px;
 }
 
 .vp-doc tr {
   border-color: var(--vp-c-divider) !important;
+  background: transparent !important;
 }
 
 .vp-doc th {
   font-family: var(--vp-font-family-mono) !important;
   font-size: 11px !important;
-  letter-spacing: 0.1em !important;
+  letter-spacing: 0.08em !important;
   text-transform: uppercase !important;
   font-weight: 600 !important;
-  color: var(--vp-c-text-1) !important;
+  color: var(--ev-warm-600) !important;
   background: transparent !important;
-  border-bottom: 2px solid var(--vp-c-text-1) !important;
-  padding: 12px 16px !important;
+  border-bottom: 1px solid var(--ev-warm-300) !important;
+  padding: 10px 14px !important;
 }
 
 .vp-doc td {
-  padding: 12px 16px !important;
+  padding: 11px 14px !important;
 }
 
-/* Links — no underline line clutter, just a colored run */
+/* Links — ink text carried by a burnt-orange underline */
 .vp-doc a {
-  color: var(--vp-c-brand-1) !important;
-  text-decoration: none !important;
-  border-bottom: 1px solid var(--vp-c-brand-soft);
-  transition: border-color 0.15s ease, background 0.15s ease;
-  padding-bottom: 1px;
+  color: var(--ev-signal-600) !important;
+  font-weight: 500;
+  text-decoration: underline !important;
+  text-decoration-color: rgba(191, 87, 0, 0.35) !important;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+  border-bottom: none !important;
+  transition: text-decoration-color 150ms var(--ev-ease), color 150ms var(--ev-ease);
 }
 
 .vp-doc a:hover {
-  border-bottom-color: var(--vp-c-brand-1) !important;
-  background: var(--vp-c-brand-soft);
-}
-
-/* Pull-quote style for blockquotes */
-.vp-doc blockquote {
-  border-left: 2px solid var(--vp-c-brand-1) !important;
-  padding: 4px 0 4px 22px !important;
-  font-family: var(--vp-font-family-display);
-  font-weight: 500;
-  font-size: 1.1em;
-  line-height: 1.55;
-  color: var(--vp-c-text-1) !important;
+  color: var(--ev-signal-400) !important;
+  text-decoration-color: var(--ev-signal-400) !important;
   background: transparent !important;
-  margin: 28px 0 !important;
 }
 
-/* Custom blocks — keep functional but flatter */
+/* Blockquote — accent hairline on the left, nothing else */
+.vp-doc blockquote {
+  border-left: 2px solid var(--ev-signal-400) !important;
+  padding: 2px 0 2px 20px !important;
+  font-size: 1em;
+  line-height: 1.7;
+  color: var(--ev-warm-700) !important;
+  background: transparent !important;
+  margin: 24px 0 !important;
+}
+
+.vp-doc blockquote > p {
+  font-size: 15px;
+}
+
+/* Custom blocks */
 .vp-doc .custom-block {
-  border-radius: 2px !important;
+  border-radius: var(--ev-radius-card) !important;
   border-width: 1px !important;
   border-left-width: 3px !important;
 }
 
 .vp-doc .custom-block.tip {
-  border-color: var(--vp-c-brand-1) !important;
+  border-color: var(--ev-signal-400) !important;
   background: var(--vp-c-brand-soft) !important;
 }
 
 .vp-doc .custom-block.info {
   border-color: var(--vp-c-border) !important;
-  background: var(--vp-c-bg-soft) !important;
+  background: var(--ev-warm-100) !important;
 }
 
 .vp-doc .custom-block.warning {
-  border-color: #b17a1a !important;
-  background: rgba(177, 122, 26, 0.08) !important;
+  border-color: var(--ev-warm-400) !important;
+  background: var(--ev-warm-100) !important;
 }
 
 .vp-doc .custom-block-title {
   font-family: var(--vp-font-family-mono) !important;
   font-size: 11px !important;
-  letter-spacing: 0.15em !important;
+  letter-spacing: 0.08em !important;
   text-transform: uppercase !important;
   font-weight: 600 !important;
+}
+
+.vp-doc .custom-block a {
+  color: inherit !important;
+}
+
+/* ===== MERMAID DIAGRAMS =====
+   Framed as a figure on paper, matching www.vietanh.dev: the card is the
+   surface, the diagram scales DOWN to fit and scrolls rather than clipping. */
+
+.vp-doc div[class*="language-mermaid"],
+.vp-doc .mermaid {
+  margin: 32px 0;
+  padding: 24px;
+  background: var(--vp-c-bg) !important;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: var(--ev-radius-card);
+  overflow-x: auto;
+  text-align: center;
+}
+
+.vp-doc .mermaid svg {
+  display: block;
+  margin: 0 auto;
+  height: auto;
+  max-width: 100%;
+}
+
+/* Mermaid measures each label in a detached sandbox OUTSIDE .vp-doc, then the
+   finished SVG is injected INSIDE it — so any prose rule that changes text
+   metrics (font-size, line-height, margin) makes the label render wider than
+   the box it was measured for and it gets clipped mid-word. Pin html labels to
+   exactly what mermaid measured with. */
+.vp-doc .mermaid foreignObject div,
+.vp-doc .mermaid .nodeLabel,
+.vp-doc .mermaid .edgeLabel,
+.vp-doc .mermaid .cluster-label,
+.vp-doc .mermaid .label,
+.vp-doc .mermaid p {
+  font-family: ui-sans-serif, system-ui, sans-serif !important;
+  font-size: 14px !important;
+  line-height: 1.3 !important;
+  letter-spacing: normal !important;
+  margin: 0 !important;
 }
 
 /* ===== FOOTER ===== */
 
 .VPFooter {
   border-top: 1px solid var(--vp-c-divider) !important;
-  background: transparent !important;
+  background: var(--ev-warm-100) !important;
 }
 
 .VPFooter .message,
 .VPFooter .copyright {
+  font-size: 12.5px !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  color: var(--ev-warm-600) !important;
+}
+
+/* ===== DOC FOOTER / OUTLINE ===== */
+
+.VPDocFooter .edit-link-button,
+.VPDocFooter .pager-link {
+  border-radius: var(--ev-radius-card) !important;
+  border-color: var(--vp-c-divider) !important;
+}
+
+.VPDocFooter .pager-link:hover {
+  border-color: rgba(165, 76, 0, 0.4) !important;
+}
+
+.VPDocAsideOutline .outline-title,
+.VPDocOutlineItem .outline-title {
   font-family: var(--vp-font-family-mono) !important;
   font-size: 11px !important;
-  letter-spacing: 0.1em !important;
+  letter-spacing: 0.08em !important;
   text-transform: uppercase !important;
-  color: var(--vp-c-text-3) !important;
+  color: var(--ev-warm-600) !important;
 }
 
 /* ===== SEARCH ===== */
 
-.DocSearch-Button {
-  border-radius: 2px !important;
-  border: 1px solid var(--vp-c-border) !important;
-  background: transparent !important;
+.VPLocalSearchBox .search-bar,
+.VPLocalSearchBox .result {
+  border-radius: var(--ev-radius-card) !important;
 }
 
 /* ===== HERO IMAGE ===== */
@@ -501,8 +729,8 @@ body {
 }
 
 .VPHero .image-container img {
-  border-radius: 2px !important;
-  border: 1px solid var(--vp-c-border) !important;
+  border-radius: var(--ev-radius-card) !important;
+  border: 1px solid var(--vp-c-divider) !important;
 }
 
 @media (min-width: 960px) {
@@ -512,6 +740,11 @@ body {
   .VPHero .VPImage {
     max-width: 440px !important;
     max-height: 340px !important;
+  }
+  .VPHero .main {
+    min-width: 0 !important;
+    flex: 1 1 auto !important;
+    padding-right: 24px !important;
   }
 }
 
@@ -525,22 +758,271 @@ body {
   }
 }
 
-/* Keep the text column from being crushed when the image is wide */
-@media (min-width: 960px) {
-  .VPHero .main {
-    min-width: 0 !important;
-    flex: 1 1 auto !important;
-    padding-right: 24px !important;
+/* ===== UTILITIES (mirrors www.nrl.ai conventions) ===== */
+
+.marker {
+  font-family: var(--vp-font-family-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ev-warm-600);
+}
+
+.hairline {
+  border-bottom: 1px solid var(--vp-c-divider);
+  padding-bottom: 18px;
+  margin-bottom: 28px;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: var(--ev-radius-card);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--ev-radius-pill);
+  padding: 3px 10px;
+  font-size: 11px;
+  line-height: 1.6;
+  background: var(--ev-warm-100);
+  color: var(--ev-warm-700);
+  border: 1px solid var(--vp-c-divider);
+}
+
+/* ===== ICONS (Lucide, inline SVG) ===== */
+
+.ev-icon {
+  width: 22px;
+  height: 22px;
+  stroke: var(--ev-signal-500);
+  stroke-width: 1.6;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
+}
+
+.ev-icon-lg {
+  width: 26px;
+  height: 26px;
+}
+
+/* ===== MARQUEE (value-prop strip with + separators) ===== */
+
+.ev-marquee {
+  margin: 36px 0 8px;
+  border-top: 1px solid var(--vp-c-divider);
+  border-bottom: 1px solid var(--vp-c-divider);
+  padding: 14px 0;
+  font-family: var(--vp-font-family-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+  color: var(--ev-warm-600);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.ev-marquee-track {
+  display: inline-flex;
+  gap: 0;
+  animation: ev-marquee-scroll 48s linear infinite;
+}
+
+.ev-marquee-track > span {
+  padding: 0 22px;
+}
+
+.ev-marquee-track > span::before {
+  content: "+";
+  color: var(--ev-signal-400);
+  margin-right: 14px;
+  font-weight: 600;
+}
+
+@keyframes ev-marquee-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
   }
 }
 
-/* ===== DEMO STRIP (home page) ===== */
+@media (prefers-reduced-motion: reduce) {
+  .ev-marquee-track {
+    animation: none;
+  }
+}
+
+/* ===== SECTION HEADERS (§ 01, § 02 …) ===== */
+
+.ev-section,
+.ev-corners-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 24px;
+  margin: 56px 0 20px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--vp-c-divider);
+}
+
+.ev-section h2,
+.ev-corners-header h2 {
+  font-family: var(--vp-font-family-display);
+  font-weight: 700;
+  font-size: clamp(1.5rem, 2.2vw, 1.95rem);
+  letter-spacing: -0.025em;
+  margin: 0 !important;
+  border: none !important;
+  padding: 0 !important;
+}
+
+.ev-section .lede,
+.ev-corners-header .lede {
+  font-size: 14px;
+  color: var(--ev-warm-600);
+  max-width: 340px;
+  text-align: right;
+}
+
+@media (max-width: 760px) {
+  .ev-section,
+  .ev-corners-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .ev-section .lede,
+  .ev-corners-header .lede {
+    text-align: left;
+    max-width: 100%;
+  }
+}
+
+/* ===== FOUR CORNERS (card grid; one signal-filled) ===== */
+
+.ev-corners {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0 0 8px;
+}
+
+.ev-corner {
+  background: #fff;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: var(--ev-radius-card);
+  padding: 24px 22px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 220px;
+  transition: border-color 200ms var(--ev-ease), box-shadow 200ms var(--ev-ease),
+    transform 200ms var(--ev-ease);
+}
+
+.ev-corner:hover {
+  border-color: rgba(165, 76, 0, 0.4);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 24px -8px rgba(26, 26, 29, 0.18);
+}
+
+.ev-corner-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ev-corner h3 {
+  font-family: var(--vp-font-family-display);
+  font-weight: 700;
+  font-size: 1.35rem;
+  letter-spacing: -0.025em;
+  margin: 0 !important;
+  line-height: 1.2;
+  color: var(--vp-c-text-1);
+}
+
+.ev-corner p {
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--ev-warm-700);
+  margin: 0;
+}
+
+.ev-corner-link {
+  margin-top: auto;
+  padding-top: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ev-signal-600) !important;
+  text-decoration: none !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  transition: color 150ms var(--ev-ease);
+}
+
+.ev-corner-link::after {
+  content: "→";
+  transition: transform 150ms var(--ev-ease);
+}
+
+.ev-corner-link:hover::after {
+  transform: translateX(3px);
+}
+
+/* The single knocked-out card — paper text on burnt orange, the UT pairing */
+.ev-corner.featured {
+  background: var(--ev-signal-500);
+  border-color: var(--ev-signal-500);
+}
+
+.ev-corner.featured h3,
+.ev-corner.featured .marker,
+.ev-corner.featured .ev-corner-link {
+  color: var(--ev-warm-50) !important;
+}
+
+.ev-corner.featured p {
+  color: rgba(250, 250, 248, 0.92) !important;
+}
+
+.ev-corner.featured code {
+  background: rgba(255, 255, 255, 0.16) !important;
+  border-color: rgba(255, 255, 255, 0.24) !important;
+  color: var(--ev-warm-50) !important;
+}
+
+.ev-corner.featured .ev-icon {
+  stroke: var(--ev-warm-50);
+}
+
+.ev-corner.featured:hover {
+  border-color: var(--ev-signal-600);
+}
+
+@media (max-width: 760px) {
+  .ev-corners {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ===== DEMO STRIP ===== */
 
 .ev-demos {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 24px;
-  margin: 32px 0 16px;
+  gap: 20px;
+  margin: 28px 0 16px;
 }
 
 @media (min-width: 960px) {
@@ -561,283 +1043,28 @@ body {
   height: auto;
   aspect-ratio: 16 / 10;
   object-fit: cover;
-  border-radius: 2px;
-  border: 1px solid var(--vp-c-border);
+  border-radius: var(--ev-radius-card);
+  border: 1px solid var(--vp-c-divider);
   display: block;
-  transition: filter 0.2s ease;
+  transition: filter 200ms var(--ev-ease);
 }
 
 .ev-demos figure:hover img {
-  filter: brightness(0.95) saturate(1.05);
+  filter: brightness(0.96) saturate(1.05);
 }
 
 .ev-demos figcaption {
-  font-family: var(--vp-font-family-mono);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  line-height: 1.5;
-  color: var(--vp-c-text-2);
-  padding-top: 4px;
-  border-top: 1px solid var(--vp-c-divider);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ev-warm-600);
 }
 
 .ev-demos figcaption strong {
   color: var(--vp-c-text-1);
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
   font-weight: 600;
 }
 
-/* ===== RESPONSIVE ===== */
-
-@media (max-width: 768px) {
-  body {
-    font-size: 15px;
-  }
-  .VPHero .tagline {
-    font-size: 15.5px !important;
-  }
-  .VPHero .container::before {
-    font-size: 10px;
-  }
-}
-
-/* ===== UTILITIES (mirrors www.nrl.ai conventions) ===== */
-
-.marker {
-  font-family: var(--vp-font-family-mono);
-  font-size: 11px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--vp-c-brand-1);
-  font-weight: 500;
-}
-
-.hairline {
-  border-bottom: 1px solid var(--vp-c-divider);
-  padding-bottom: 18px;
-  margin-bottom: 28px;
-}
-
-.divider-ink {
-  border-top: 1px solid var(--vp-c-text-1);
-}
-
-/* ===== ICONS (Lucide, inline SVG) ===== */
-
-.ev-icon {
-  width: 22px;
-  height: 22px;
-  stroke: var(--vp-c-brand-1);
-  stroke-width: 1.6;
-  fill: none;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  flex-shrink: 0;
-}
-
-.ev-icon-lg {
-  width: 28px;
-  height: 28px;
-  stroke-width: 1.6;
-}
-
-/* ===== MARQUEE (value-prop strip with + separators) ===== */
-
-.ev-marquee {
-  margin: 36px 0 8px;
-  border-top: 1px solid var(--vp-c-divider);
-  border-bottom: 1px solid var(--vp-c-divider);
-  padding: 14px 0;
-  font-family: var(--vp-font-family-mono);
-  font-size: 11.5px;
-  letter-spacing: 0.14em;
-  text-transform: lowercase;
-  color: var(--vp-c-text-2);
-  overflow: hidden;
-  white-space: nowrap;
-}
-
-.ev-marquee-track {
-  display: inline-flex;
-  gap: 0;
-  animation: ev-marquee-scroll 48s linear infinite;
-}
-
-.ev-marquee-track > span {
-  padding: 0 22px;
-}
-
-.ev-marquee-track > span::before {
-  content: "+";
-  color: var(--vp-c-brand-1);
-  margin-right: 14px;
-  font-weight: 600;
-}
-
-@keyframes ev-marquee-scroll {
-  from { transform: translateX(0); }
-  to { transform: translateX(-50%); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .ev-marquee-track { animation: none; }
-}
-
-/* ===== FOUR CORNERS (numbered card grid; one highlighted) ===== */
-
-.ev-corners-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 24px;
-  margin: 56px 0 18px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--vp-c-text-1);
-}
-
-.ev-corners-header h2 {
-  font-family: var(--vp-font-family-display);
-  font-weight: 700;
-  font-size: clamp(1.6rem, 2.4vw, 2.1rem);
-  letter-spacing: -0.02em;
-  margin: 0;
-  border: none !important;
-  padding: 0 !important;
-}
-
-.ev-corners-header h2::before {
-  content: none !important;
-}
-
-.ev-corners-header .lede {
-  font-size: 14px;
-  color: var(--vp-c-text-3);
-  max-width: 340px;
-  text-align: right;
-}
-
-.ev-corners {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1px;
-  background: var(--vp-c-divider);
-  border: 1px solid var(--vp-c-divider);
-  margin: 0 0 8px;
-}
-
-.ev-corner {
-  background: var(--vp-c-bg);
-  padding: 28px 26px 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  min-height: 230px;
-  transition: background 0.2s ease;
-}
-
-.ev-corner-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.ev-corner-head .marker {
-  flex-shrink: 0;
-}
-
-.ev-corner h3 {
-  font-family: var(--vp-font-family-display);
-  font-weight: 700;
-  font-size: 1.55rem;
-  letter-spacing: -0.02em;
-  margin: 0 !important;
-  line-height: 1.15;
-  color: var(--vp-c-text-1);
-}
-
-.ev-corner p {
-  font-size: 14.5px;
-  line-height: 1.6;
-  color: var(--vp-c-text-2);
-  margin: 0;
-}
-
-.ev-corner-link {
-  margin-top: auto;
-  padding-top: 8px;
-  font-family: var(--vp-font-family-mono);
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: lowercase;
-  color: var(--vp-c-brand-1) !important;
-  border-bottom: none !important;
-  background: none !important;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  align-self: flex-start;
-  transition: color 0.15s ease;
-}
-
-.ev-corner-link::after {
-  content: "→";
-  transition: transform 0.15s ease;
-}
-
-.ev-corner-link:hover {
-  color: var(--vp-c-text-1) !important;
-}
-
-.ev-corner-link:hover::after {
-  transform: translateX(3px);
-}
-
-.ev-corner.featured {
-  background: var(--vp-c-brand-1);
-  color: var(--vp-c-bg);
-}
-
-.ev-corner.featured h3,
-.ev-corner.featured .marker,
-.ev-corner.featured p,
-.ev-corner.featured .ev-corner-link {
-  color: var(--vp-c-bg) !important;
-}
-
-.ev-corner.featured .ev-icon {
-  stroke: var(--vp-c-bg);
-}
-
-.ev-corner.featured .marker {
-  opacity: 0.85;
-}
-
-.ev-corner.featured p {
-  color: rgba(241, 237, 227, 0.92) !important;
-}
-
-.ev-corner.featured .ev-corner-link:hover {
-  color: var(--vp-c-text-1) !important;
-}
-
-@media (max-width: 760px) {
-  .ev-corners {
-    grid-template-columns: 1fr;
-  }
-  .ev-corners-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
-  }
-  .ev-corners-header .lede {
-    text-align: left;
-    max-width: 100%;
-  }
-}
-
-/* ===== PRINCIPLES (numbered list of operating rules) ===== */
+/* ===== PRINCIPLES ===== */
 
 .ev-principles {
   margin: 24px 0 8px;
@@ -846,84 +1073,47 @@ body {
 
 .ev-principle {
   display: grid;
-  grid-template-columns: 60px 220px 1fr;
-  gap: 28px;
+  grid-template-columns: 48px 220px 1fr;
+  gap: 24px;
   align-items: baseline;
-  padding: 22px 4px;
+  padding: 20px 4px;
   border-bottom: 1px solid var(--vp-c-divider);
 }
 
 .ev-principle .num {
   font-family: var(--vp-font-family-mono);
-  font-size: 13px;
-  letter-spacing: 0.1em;
-  color: var(--vp-c-brand-1);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--ev-signal-500);
   font-weight: 600;
 }
 
 .ev-principle .title {
   font-family: var(--vp-font-family-display);
-  font-weight: 700;
-  font-size: 1.15rem;
-  letter-spacing: -0.015em;
+  font-weight: 600;
+  font-size: 1.05rem;
+  letter-spacing: -0.02em;
   color: var(--vp-c-text-1);
 }
 
 .ev-principle .body {
-  font-size: 14.5px;
-  line-height: 1.6;
-  color: var(--vp-c-text-2);
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--ev-warm-700);
 }
 
 @media (max-width: 760px) {
   .ev-principle {
     grid-template-columns: 1fr;
-    gap: 8px;
+    gap: 6px;
     padding: 18px 4px;
   }
 }
 
-/* ===== SECTION HEADERS for home page (§ 02, § 03 etc.) ===== */
+/* ===== RESPONSIVE ===== */
 
-.ev-section {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 24px;
-  margin: 56px 0 22px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--vp-c-text-1);
-}
-
-.ev-section h2 {
-  font-family: var(--vp-font-family-display);
-  font-weight: 700;
-  font-size: clamp(1.5rem, 2.2vw, 1.95rem);
-  letter-spacing: -0.02em;
-  margin: 0 !important;
-  border: none !important;
-  padding: 0 !important;
-}
-
-.ev-section h2::before {
-  content: none !important;
-}
-
-.ev-section .lede {
-  font-size: 14px;
-  color: var(--vp-c-text-3);
-  max-width: 340px;
-  text-align: right;
-}
-
-@media (max-width: 760px) {
-  .ev-section {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
-  }
-  .ev-section .lede {
-    text-align: left;
-    max-width: 100%;
+@media (max-width: 768px) {
+  body {
+    font-size: 15px;
   }
 }
