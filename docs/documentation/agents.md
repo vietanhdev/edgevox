@@ -238,9 +238,9 @@ tool_calls?`"}
     APP --> MC
     MC -- "no (or max_tool_hops hit)" --> REPLY[final text reply]
     REPLY --> TTS[TTS → speaker]
-    classDef io    fill:#e8f0fe,stroke:#1a73e8,color:#0b3d91
-    classDef model fill:#fef7e0,stroke:#f9ab00,color:#7a4f01
-    classDef loop  fill:#e6f4ea,stroke:#34a853,color:#0d652d
+    classDef io    fill:#fafaf8,stroke:#cececb,color:#5c5c5a
+    classDef model fill:#e3e3e1,stroke:#a6a6a3,color:#2a2a2a
+    classDef loop  fill:#f3bd92,stroke:#8c4000,color:#4a2200,stroke-width:2px
     class V,STT,TTS io
     class LLM,MC,REPLY model
     class TR,CB,APP loop
@@ -301,9 +301,9 @@ behavior-tree workflows`"]
 Motor control, watchdogs,
 safety monitor (no LLM!)`"]
     D --> E --> R
-    classDef deliberative fill:#e8f0fe,stroke:#1a73e8,color:#0b3d91
-    classDef executive    fill:#fef7e0,stroke:#f9ab00,color:#7a4f01
-    classDef reactive     fill:#fce8e6,stroke:#d93025,color:#8a1d15
+    classDef deliberative fill:#f3bd92,stroke:#8c4000,color:#4a2200,stroke-width:2px
+    classDef executive    fill:#e3e3e1,stroke:#a6a6a3,color:#2a2a2a
+    classDef reactive     fill:#cececb,stroke:#7e7e7c,color:#1a1a1d
     class D deliberative
     class E executive
     class R reactive
@@ -378,9 +378,9 @@ sees ctx.stop → handle.cancel()`"]
     B["`Sim / robot backend freezes the actuator
 on its next physics tick`"]
     U --> S --> SM --> P --> D --> B
-    classDef user fill:#e8f0fe,stroke:#1a73e8,color:#0b3d91
-    classDef safe fill:#fce8e6,stroke:#d93025,color:#8a1d15
-    classDef sys  fill:#fef7e0,stroke:#f9ab00,color:#7a4f01
+    classDef user fill:#fafaf8,stroke:#cececb,color:#5c5c5a
+    classDef safe fill:#f3bd92,stroke:#8c4000,color:#4a2200,stroke-width:2px
+    classDef sys  fill:#e3e3e1,stroke:#a6a6a3,color:#2a2a2a
     class U,S user
     class SM,P safe
     class D,B sys

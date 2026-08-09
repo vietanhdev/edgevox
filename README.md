@@ -320,11 +320,11 @@ Mic → VAD → STT → AgentProcessor → SentenceSplit → TTS → Spk`"]
     R --> VP
     VP --> D
     VP --> OUT
-    classDef deliberative fill:#e8f0fe,stroke:#1a73e8,color:#0b3d91
-    classDef executive    fill:#fef7e0,stroke:#f9ab00,color:#7a4f01
-    classDef reactive     fill:#fce8e6,stroke:#d93025,color:#8a1d15
-    classDef substrate    fill:#e6f4ea,stroke:#34a853,color:#0d652d
-    classDef out          fill:#f1f3f4,stroke:#5f6368,color:#202124
+    classDef deliberative fill:#f3bd92,stroke:#8c4000,color:#4a2200,stroke-width:2px
+    classDef executive    fill:#e3e3e1,stroke:#a6a6a3,color:#2a2a2a
+    classDef reactive     fill:#cececb,stroke:#7e7e7c,color:#1a1a1d
+    classDef substrate    fill:#f1f1ef,stroke:#cececb,color:#424241
+    classDef out          fill:#fafaf8,stroke:#cececb,color:#5c5c5a
     class D deliberative
     class E executive
     class R reactive

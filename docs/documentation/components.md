@@ -36,6 +36,8 @@ flowchart TB
     CORE --> TTS
     LLM --> AGENTS
     AGENTS --> INTEG
+    classDef focal fill:#f3bd92,stroke:#8c4000,color:#4a2200,stroke-width:2px
+    class AGENTS focal
 ```
 
 Everything above a horizontal line calls into the line below it. Components at the same level don't depend on each other — that's what keeps them swappable.
@@ -59,6 +61,8 @@ flowchart LR
     AEC --> REC
 
     WAKE["WakeWordDetector<br/>(optional, ONNX)"] --> REC
+    classDef focal fill:#f3bd92,stroke:#8c4000,color:#4a2200,stroke-width:2px
+    class REC focal
 ```
 
 **Key pieces.**
@@ -89,6 +93,8 @@ flowchart LR
     CHUNK -.->|load failure| WHI
 
     WHI & SHERPA & CHUNK -->|transcribe| TEXT[str transcript]
+    classDef focal fill:#f3bd92,stroke:#8c4000,color:#4a2200,stroke-width:2px
+    class FACTORY focal
 ```
 
 **Key pieces.**
@@ -117,6 +123,8 @@ flowchart LR
     FACTORY -->|pythaitts| TH["PyThaiTTSBackend<br/>Thai · Tacotron2"]
 
     KO & PI & SU & TH -->|synthesize / synthesize_stream| WAV["np.ndarray audio"]
+    classDef focal fill:#f3bd92,stroke:#8c4000,color:#4a2200,stroke-width:2px
+    class FACTORY focal
 ```
 
 **Key pieces.**
@@ -162,6 +170,8 @@ flowchart LR
     Frames --> PROC --> PIPE
     INT -.->|flushes| PIPE
     GET --> LANG
+    classDef focal fill:#f3bd92,stroke:#8c4000,color:#4a2200,stroke-width:2px
+    class PIPE focal
 ```
 
 **Key pieces.**
@@ -196,6 +206,8 @@ flowchart LR
     GBNF["grammars.py<br/>(GBNF constraints)"] -.-> LLM
     HSLM["hooks_slm.py<br/>(default_slm_hooks)"] -.-> AGENT["agents/LLMAgent"]
     CALLS --> AGENT
+    classDef focal fill:#f3bd92,stroke:#8c4000,color:#4a2200,stroke-width:2px
+    class PARSERS focal
 ```
 
 **Key pieces.**
@@ -267,6 +279,8 @@ flowchart TB
     LLMA --> BUS
     BG & POOL --> BB
     CTX --> ART
+    classDef focal fill:#f3bd92,stroke:#8c4000,color:#4a2200,stroke-width:2px
+    class LLMA focal
 ```
 
 **Key pieces.**
@@ -312,6 +326,8 @@ flowchart LR
     CORE --> PIPE
     PIPE -->|WAV + JSON events| WS
     WS --> WAV
+    classDef focal fill:#f3bd92,stroke:#8c4000,color:#4a2200,stroke-width:2px
+    class CORE focal
 ```
 
 **Key pieces.**
@@ -339,6 +355,8 @@ flowchart LR
 
     TUI & WEB & CLI --> PIPE["audio + core + stt + llm + tts"]
     CLI -.->|--ros2| ROS["integrations/ros2_bridge"]
+    classDef focal fill:#f3bd92,stroke:#8c4000,color:#4a2200,stroke-width:2px
+    class ROUTER focal
 ```
 
 **Key pieces.**
@@ -382,6 +400,8 @@ flowchart TB
     Sim --> AGENTS["edgevox.agents<br/>(SimEnvironment protocol)"]
     ROS2 --> AGENTS
     Chess --> AGENTS
+    classDef focal fill:#f3bd92,stroke:#8c4000,color:#4a2200,stroke-width:2px
+    class AGENTS focal
 ```
 
 **Key pieces.**

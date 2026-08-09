@@ -27,6 +27,8 @@ flowchart LR
     AFTER_TOOL --> H3 --> M
     ON_RUN_END --> H4 --> S
     ON_RUN_START --> H5 --> Session[Session.messages]
+    classDef focal fill:#f3bd92,stroke:#8c4000,color:#4a2200,stroke-width:2px
+    class M,S,N focal
 ```
 
 ## `MemoryStore`

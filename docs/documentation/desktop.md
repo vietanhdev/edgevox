@@ -159,6 +159,8 @@ flowchart LR
     Voice -- "transcript" --> Bridge
     Bridge -- "reply text" --> TTS
     Voice -- "barge_in" --> Bridge
+    classDef focal fill:#f3bd92,stroke:#8c4000,color:#4a2200,stroke-width:2px
+    class Agent focal
 ```
 
 Blocking agent turns run on a `QThreadPool` worker; agent events become

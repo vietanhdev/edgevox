@@ -20,6 +20,8 @@ flowchart TD
     J -->|next hop| D
     J -->|budget exhausted| R
     R --> S[ON_RUN_END<br/>hooks fire]
+    classDef focal fill:#f3bd92,stroke:#8c4000,color:#4a2200,stroke-width:2px
+    class B,D,G,H,J,S focal
 ```
 
 ## Key invariants
